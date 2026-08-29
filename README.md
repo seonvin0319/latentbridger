@@ -4,6 +4,9 @@ This repository contains the actor-free reference implementation of
 **PathBridger: Subgoal Bridges for Offline Goal-Conditioned Reinforcement
 Learning** for state-based OGBench tasks.
 
+**Research team:** [Soohyun Choi](https://github.com/SChoish),
+[Seonvin Cho](https://github.com/seonvin0319), and Prof. Songnam Hong.
+
 PathBridger learns exactly four components:
 
 1. a bounded transitive state-goal value and its EMA target,
