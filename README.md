@@ -5,7 +5,7 @@ This repository contains the actor-free reference implementation of
 Learning** for state-based OGBench tasks.
 
 **Research team:** [Soohyun Choi](https://github.com/SChoish),
-[Seonvin Cho](https://github.com/seonvin0319), and Prof. Songnam Hong.
+[Seonvin Cho](https://github.com/seonvin0319), and Prof. Songnam Hong.\n\n**Paper:** [arXiv:2608.29061](https://arxiv.org/abs/2608.29061)
 
 PathBridger learns exactly four components:
 
