@@ -210,11 +210,23 @@ def evaluate_latent(
     metrics: dict[str, float | int | str] = {}
     task_success_rates = []
     for task_id in task_ids:
+        # Pin both of the environment's random sources once per task, then let
+        # the episode chain run.  `reset(seed=...)` only covers `env.np_random`
+        # (the initial state); OGBench builds the goal observation by stepping
+        # `action_space.sample()` twice, and the action space carries its own
+        # generator.  Leaving either unseeded means two processes evaluating
+        # the *same* frozen policy see different episodes, which makes a
+        # cross-variant success comparison meaningless.
+        task_seed = int(seed) * 1000 + int(task_id)
+        env.action_space.seed(task_seed)
         successes = []
-        for _ in range(int(episodes_per_task)):
-            observation, info = env.reset(
-                options={'task_id': task_id, 'render_goal': False}
-            )
+        for episode in range(int(episodes_per_task)):
+            reset_kwargs: dict[str, Any] = {
+                'options': {'task_id': task_id, 'render_goal': False}
+            }
+            if episode == 0:
+                reset_kwargs['seed'] = task_seed
+            observation, info = env.reset(**reset_kwargs)
             if not isinstance(info, Mapping) or 'goal' not in info:
                 raise RuntimeError(
                     f'Environment reset for task {task_id} did not return info["goal"].'

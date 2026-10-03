@@ -745,17 +745,23 @@ class _StubEnv:
         def __init__(self, action_dim):
             self.low = -np.ones(action_dim, dtype=np.float32)
             self.high = np.ones(action_dim, dtype=np.float32)
+            self.seeds: list[int] = []
+
+        def seed(self, value):
+            self.seeds.append(int(value))
 
     def __init__(self, obs_dim, action_dim):
         self.spec = self._Spec()
         self.action_space = self._ActionSpace(action_dim)
         self._obs_dim = obs_dim
         self.steps = 0
+        self.reset_seeds: list[int | None] = []
 
     def _observation(self):
         return np.zeros(self._obs_dim, dtype=np.float32)
 
-    def reset(self, options=None):
+    def reset(self, options=None, seed=None):
+        self.reset_seeds.append(None if seed is None else int(seed))
         self.steps = 0
         return self._observation(), {'goal': self._observation()}
 
@@ -809,6 +815,31 @@ def test_direct_goal_mode_never_touches_the_flow():
     evaluate_latent(agent, env, mode='direct_goal', task_ids=(1,), episodes_per_task=1)
     assert agent.replans == 0
     assert env.steps == _StubEnv._Spec.max_episode_steps
+
+
+def test_evaluation_pins_both_environment_random_sources():
+    """`reset(seed=)` alone leaves OGBench's goal sampling unseeded."""
+
+    from utils.latent_evaluation import evaluate_latent
+
+    dataset = _make_dataset()
+    config = _make_config('actnce_local')
+    sampler = LatentBridgerDataset(dataset, config)
+    agent = _make_agent(config, sampler.sample(8), stage='actor')
+    env = _StubEnv(_OBS_DIM, _ACTION_DIM)
+
+    evaluate_latent(
+        agent,
+        env,
+        mode='direct_goal',
+        task_ids=(1, 2),
+        episodes_per_task=3,
+        seed=2,
+    )
+    # One action-space seed per task, and the first reset of each task is
+    # seeded so the episode chain is reproducible from there.
+    assert env.action_space.seeds == [2001, 2002]
+    assert env.reset_seeds == [2001, None, None, 2002, None, None]
 
 
 def test_replan_interval_is_validated_against_the_action_horizon():
