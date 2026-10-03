@@ -41,7 +41,11 @@ import optax
 
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field, resolve_checkpoint
 from utils.goal_representation import goal_representation
-from utils.latent_datasets import FLOW_TARGET_MODES, sparse_prefix_offsets
+from utils.latent_datasets import (
+    ACTOR_GOAL_SAMPLING_MODES,
+    FLOW_TARGET_MODES,
+    sparse_prefix_offsets,
+)
 from utils.networks import MLP
 
 _MODULE_NAMES = ('phi_sa', 'phi_s', 'psi', 'actor', 'flow')
@@ -59,6 +63,7 @@ VARIANTS = (
     'actnce_local',
     'actnce_multihorizon',
     'latent_rf_sparse',
+    'actnce_geometric',
 )
 CRITIC_TYPES = ('none', 'state', 'sa')
 ACTOR_GOAL_INPUTS = ('raw', 'latent')
@@ -173,11 +178,24 @@ VARIANT_SETTINGS: dict[str, dict[str, Any]] = {
         flow_target_mode='sparse',
         eval_mode='latent_flow',
     ),
+    # Five discrete rungs beat a single one; a geometric horizon replaces the
+    # rungs with a smooth distribution matched to the critic's own discount.
+    'actnce_geometric': dict(
+        critic_type='sa',
+        actor_goal_input='latent',
+        actor_objective='contrastive',
+        actor_bc_coef=10.0,
+        action_nce_coef=1.0,
+        actor_goal_sampling='geometric',
+        use_flow=False,
+        eval_mode='direct_goal',
+    ),
 }
 
 # Every released v0 variant predates these knobs; filling them in here keeps
 # their sampling byte-identical while letting the variant table own them.
 for _settings in VARIANT_SETTINGS.values():
+    _settings.setdefault('actor_goal_sampling', 'offsets')
     _settings.setdefault('actor_goal_offsets', (1,))
     _settings.setdefault('flow_target_mode', 'consecutive')
     # A sparse bridge must be replanned every step: its k-th waypoint is h_k
@@ -1004,6 +1022,7 @@ class LatentBridgerAgent(flax.struct.PyTreeNode):
             'actor_goal_input',
             'actor_objective',
             'use_flow',
+            'actor_goal_sampling',
             'actor_goal_offsets',
             'flow_target_mode',
         ):
@@ -1044,6 +1063,18 @@ class LatentBridgerAgent(flax.struct.PyTreeNode):
             raise ValueError(
                 f'flow_target_mode must be one of {FLOW_TARGET_MODES}, '
                 f'got {config["flow_target_mode"]!r}.'
+            )
+        if str(config['actor_goal_sampling']) not in ACTOR_GOAL_SAMPLING_MODES:
+            raise ValueError(
+                'actor_goal_sampling must be one of '
+                f'{ACTOR_GOAL_SAMPLING_MODES}, '
+                f'got {config["actor_goal_sampling"]!r}.'
+            )
+        # 0.0 means "follow the critic discount"; the sampler resolves it.
+        actor_discount = float(config.setdefault('actor_discount', 0.0))
+        if actor_discount and not 0.0 < actor_discount < 1.0:
+            raise ValueError(
+                f'actor_discount must be 0 or in (0, 1), got {actor_discount}.'
             )
         if stage == 'critic' and str(config['critic_type']) == 'none':
             raise ValueError(
@@ -1341,8 +1372,10 @@ def get_config() -> ml_collections.ConfigDict:
             # Dataset supervision.
             future_sampling='geometric',
             bridge_goal_sampling='trajectory',
+            actor_goal_sampling='offsets',
             actor_goal_max_offset=1,
             actor_goal_offsets=(1,),
+            actor_discount=0.0,   # 0 tracks `discount`
             action_horizon=5,
             flow_target_mode='consecutive',
             # Objectives.

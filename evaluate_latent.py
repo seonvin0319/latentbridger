@@ -40,8 +40,18 @@ flags.DEFINE_integer(
     'Latent-flow actions executed per generated prefix; 0 uses the config '
     'default (the full action horizon).',
 )
+flags.DEFINE_float(
+    'slerp_alpha',
+    1.0,
+    'Interpolation fraction for --mode=slerp_bridge; 1.0 is direct_goal.',
+)
 flags.DEFINE_integer('episodes', 50, 'Episodes for each of the five predefined tasks.')
 flags.DEFINE_integer('seed', 0, 'Evaluation seed.')
+flags.DEFINE_string(
+    'manifest_path',
+    '',
+    'Optional paired episode manifest JSON; generated from --seed if absent.',
+)
 flags.DEFINE_string('output_path', '', 'Optional JSON result path.')
 
 config_flags.DEFINE_config_file(
@@ -87,6 +97,11 @@ def main(_):
         restore_host_rng=False,
     )
 
+    manifest = None
+    if FLAGS.manifest_path:
+        with Path(FLAGS.manifest_path).open('r', encoding='utf-8') as file:
+            manifest = json.load(file)['episodes']
+
     metrics = evaluate_latent(
         agent,
         env,
@@ -95,6 +110,8 @@ def main(_):
         episodes_per_task=FLAGS.episodes,
         seed=FLAGS.seed,
         replan_interval=FLAGS.replan_interval or None,
+        alpha=FLAGS.slerp_alpha,
+        manifest=manifest,
     )
     result = {
         'checkpoint_step': checkpoint_step,
@@ -102,10 +119,13 @@ def main(_):
         'variant': str(config.variant),
         'mode': str(FLAGS.mode),
         'seed': int(FLAGS.seed),
+        'manifest_path': str(FLAGS.manifest_path),
         **{f'evaluation/{key}': value for key, value in metrics.items()},
     }
     if 'replan_interval' in metrics:
         result['replan_interval'] = int(metrics['replan_interval'])
+    if 'alpha' in metrics:
+        result['slerp_alpha'] = float(metrics['alpha'])
     text = json.dumps(result, indent=2, sort_keys=True)
     print(text)
     if FLAGS.output_path:

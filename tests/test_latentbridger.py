@@ -836,10 +836,10 @@ def test_evaluation_pins_both_environment_random_sources():
         episodes_per_task=3,
         seed=2,
     )
-    # One action-space seed per task, and the first reset of each task is
-    # seeded so the episode chain is reproducible from there.
-    assert env.action_space.seeds == [2001, 2002]
-    assert env.reset_seeds == [2001, None, None, 2002, None, None]
+    # Every episode pins both sources, so the episode list is reproducible
+    # from any point rather than only from the start of a task chain.
+    assert env.reset_seeds == [2010000, 2010001, 2010002, 2020000, 2020001, 2020002]
+    assert env.action_space.seeds == [seed + 5 for seed in env.reset_seeds]
 
 
 def test_replan_interval_is_validated_against_the_action_horizon():
@@ -867,6 +867,268 @@ def test_replan_interval_is_validated_against_the_action_horizon():
             batch,
             stage='flow',
         )
+
+
+# ----------------------------------------------------------------------
+# v2: geometric actor horizons and the deterministic latent bridge
+# ----------------------------------------------------------------------
+def test_geometric_actor_offsets_follow_the_configured_discount():
+    """The geometric actor must sample its own horizon, not the critic's rungs."""
+
+    dataset = _make_dataset(episode_lengths=(400, 400, 400, 400))
+    sampler = LatentBridgerDataset(dataset, _make_config('actnce_geometric'))
+    # A zero actor_discount means "track the critic", which is the default.
+    assert sampler.actor_goal_sampling == 'geometric'
+    assert sampler.actor_discount == pytest.approx(float(sampler.discount))
+
+    batch = sampler.sample(16384)
+    offsets = batch['actor_offsets'].astype(np.int64)
+    assert offsets.min() >= 1
+    # Geometric(1 - gamma) has mean 1 / (1 - gamma); truncation at the episode
+    # end only pulls the empirical mean down, so check the upper side loosely
+    # and confirm the distribution is genuinely spread over many horizons.
+    expected_mean = 1.0 / (1.0 - sampler.actor_discount)
+    assert 0.5 * expected_mean <= offsets.mean() <= 1.2 * expected_mean
+    assert len(np.unique(offsets)) > 20
+
+    # The goal is still s_{t+delta} of the same episode.
+    anchors = batch['observations']
+    goals = batch['actor_goals']
+    assert np.array_equal(anchors[:, _EPISODE_INDEX], goals[:, _EPISODE_INDEX])
+    assert np.array_equal(
+        goals[:, _GLOBAL_INDEX] - anchors[:, _GLOBAL_INDEX],
+        batch['actor_offsets'],
+    )
+
+
+def test_geometric_actor_goals_never_cross_the_terminal():
+    dataset = _make_dataset(episode_lengths=(5, 5, 5, 5))
+    sampler = LatentBridgerDataset(dataset, _make_config('actnce_geometric'))
+    batch = sampler.sample(4096)
+    assert np.array_equal(
+        batch['observations'][:, _EPISODE_INDEX],
+        batch['actor_goals'][:, _EPISODE_INDEX],
+    )
+    assert batch['actor_offsets'].max() <= 4
+
+
+def test_actor_discount_is_configurable_independently_of_the_critic():
+    dataset = _make_dataset(episode_lengths=(400, 400))
+    config = _make_config('actnce_geometric', actor_discount=0.5)
+    sampler = LatentBridgerDataset(dataset, config)
+    assert sampler.actor_discount == pytest.approx(0.5)
+    assert sampler.discount != pytest.approx(0.5)
+    # Mean 1 / (1 - 0.5) = 2, far shorter than the critic's horizon.
+    offsets = sampler.sample(8192)['actor_offsets']
+    assert offsets.mean() < 4.0
+
+
+def test_slerp_endpoints_are_exact_and_the_path_stays_on_the_sphere():
+    from utils.latent_evaluation import slerp
+
+    rng = np.random.default_rng(0)
+    start = rng.normal(size=16).astype(np.float32)
+    start /= np.linalg.norm(start)
+    end = rng.normal(size=16).astype(np.float32)
+    end /= np.linalg.norm(end)
+
+    # alpha=1 must be bit-identical to the goal latent, because that identity
+    # is what makes the alpha=1 run a sanity check on direct_goal.
+    assert np.array_equal(slerp(start, end, 1.0), end)
+    assert np.array_equal(slerp(start, end, 0.0), start)
+
+    omega = np.arccos(np.clip(np.dot(start, end), -1.0, 1.0))
+    for alpha in (0.1, 0.2, 0.4, 0.6, 0.8):
+        waypoint = slerp(start, end, alpha)
+        assert np.linalg.norm(waypoint) == pytest.approx(1.0, abs=1e-5)
+        # The waypoint sits at the requested fraction of the arc.
+        angle = np.arccos(np.clip(np.dot(start, waypoint), -1.0, 1.0))
+        assert angle == pytest.approx(alpha * omega, abs=1e-4)
+
+    # Parallel and antiparallel inputs have no unique great circle; the
+    # fallback must still return a finite unit vector.
+    for degenerate in (start.copy(), -start):
+        waypoint = slerp(start, degenerate, 0.5)
+        assert np.all(np.isfinite(waypoint))
+        assert np.linalg.norm(waypoint) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_slerp_bridge_at_alpha_one_reproduces_direct_goal():
+    from utils.latent_evaluation import evaluate_latent
+
+    dataset = _make_dataset()
+    config = _make_config('actnce_geometric')
+    sampler = LatentBridgerDataset(dataset, config)
+    agent = _CountingAgent(_make_agent(config, sampler.sample(8), stage='actor'))
+
+    direct_env = _StubEnv(_OBS_DIM, _ACTION_DIM)
+    direct = evaluate_latent(
+        agent, direct_env, mode='direct_goal', task_ids=(1,), episodes_per_task=2
+    )
+    bridge_env = _StubEnv(_OBS_DIM, _ACTION_DIM)
+    bridge = evaluate_latent(
+        agent,
+        bridge_env,
+        mode='slerp_bridge',
+        task_ids=(1,),
+        episodes_per_task=2,
+        alpha=1.0,
+    )
+    assert bridge['episodes'] == direct['episodes']
+    assert bridge['overall_success'] == direct['overall_success']
+    assert bridge_env.reset_seeds == direct_env.reset_seeds
+    # The bridge is deterministic: no flow is sampled anywhere in the loop.
+    assert agent.replans == 0
+
+
+def test_episode_manifest_pairs_variants_on_identical_episodes():
+    from utils.latent_evaluation import episode_manifest, evaluate_latent
+
+    manifest = episode_manifest(task_ids=(1, 2), episodes_per_task=2, seed=3)
+    assert len(manifest) == 4
+    for entry in manifest:
+        assert {'task_id', 'env_seed', 'action_space_seed'} <= set(entry)
+    # Every episode is distinct, so no two episodes silently collapse into one.
+    assert len({entry['env_seed'] for entry in manifest}) == 4
+
+    dataset = _make_dataset()
+    agents = []
+    for variant in ('actnce_local', 'actnce_geometric'):
+        config = _make_config(variant)
+        sampler = LatentBridgerDataset(dataset, config)
+        agents.append(_make_agent(config, sampler.sample(8), stage='actor'))
+
+    envs = [_StubEnv(_OBS_DIM, _ACTION_DIM) for _ in agents]
+    for agent, env in zip(agents, envs):
+        evaluate_latent(agent, env, mode='direct_goal', manifest=manifest)
+
+    expected = [entry['env_seed'] for entry in manifest]
+    for env in envs:
+        assert env.reset_seeds == expected
+        assert env.action_space.seeds == [
+            entry['action_space_seed'] for entry in manifest
+        ]
+
+    with pytest.raises(ValueError, match='missing'):
+        evaluate_latent(
+            agents[0],
+            envs[0],
+            mode='direct_goal',
+            manifest=[{'task_id': 1, 'env_seed': 0}],
+        )
+
+
+def test_geometric_variant_differs_from_multihorizon_by_one_knob():
+    import importlib.util
+
+    difference = {
+        key
+        for key in VARIANT_SETTINGS['actnce_multihorizon']
+        if VARIANT_SETTINGS['actnce_multihorizon'][key]
+        != VARIANT_SETTINGS['actnce_geometric'][key]
+    }
+    # Multi-horizon draws from five rungs; geometric replaces the rung table
+    # with a distribution, so the offsets field falls back to its default.
+    assert difference == {'actor_goal_sampling', 'actor_goal_offsets'}
+    assert VARIANT_SETTINGS['actnce_geometric']['actor_goal_offsets'] == (1,)
+
+    spec = importlib.util.spec_from_file_location(
+        'run_latentbridger_suite',
+        Path(__file__).resolve().parents[1] / 'scripts' / 'run_latentbridger_suite.py',
+    )
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+
+    # All three v2 actors must share one critic checkpoint, and must not
+    # share an actor checkpoint with each other.
+    v2 = ('actnce_local', 'actnce_multihorizon', 'actnce_geometric')
+    assert len({runner.critic_signature(variant) for variant in v2}) == 1
+    assert len({runner.actor_signature(variant) for variant in v2}) == 3
+
+
+# ----------------------------------------------------------------------
+# Long sweep: resume safety and stage sharing
+# ----------------------------------------------------------------------
+def _sweep_lib():
+    import scripts.latent_sweep_lib as module
+
+    return module
+
+
+def test_config_hash_ignores_fields_that_do_not_change_the_gradients():
+    """Adding a behaviour-preserving config field must not orphan checkpoints."""
+
+    lib = _sweep_lib()
+    from configs.latent.cube_single import get_config as cube_single_config
+
+    base = dict(cube_single_config('actnce_local'))
+    reference = lib.config_hash(base)
+
+    # A pilot written before a field existed hashes the same, because the
+    # missing field is filled from the default that reproduces its behaviour.
+    legacy = {key: value for key, value in base.items() if key != 'actor_goal_sampling'}
+    assert lib.config_hash(legacy) == reference
+    # Naming and evaluation knobs do not change what a stage computes.
+    renamed = dict(base, variant='sa_cl_bc_actnce', eval_mode='latent_flow')
+    assert lib.config_hash(renamed) == reference
+    # Anything that does change the gradients must change the hash.
+    for key, value in (
+        ('repr_dim', 128),
+        ('discount', 0.95),
+        ('actor_bc_coef', 1.0),
+        ('horizon', 25),
+        ('learning_rate', 1e-4),
+    ):
+        assert lib.config_hash(dict(base, **{key: value})) != reference, key
+
+
+def test_resume_is_refused_when_the_frozen_parent_differs():
+    """An actor trained against the 100k critic is not a prefix of one
+    trained against the 1M critic."""
+
+    lib = _sweep_lib()
+    from configs.latent.cube_single import get_config as cube_single_config
+
+    resolved = dict(cube_single_config('actnce_multihorizon'))
+    pilot = lib.stage_fingerprint(resolved, 'actnce_multihorizon', 'actor', 0, 1024, 100_000)
+    planned = lib.stage_fingerprint(resolved, 'actnce_multihorizon', 'actor', 0, 1024, 1_000_000)
+    compatible, mismatched = lib.fingerprint_matches(pilot, planned)
+    assert not compatible
+    assert mismatched == ['parent_step']
+
+    # Identical dependencies do resume, and the critic (a root stage) always
+    # has parent_step 0, so it is the stage that actually continues.
+    critic = lib.stage_fingerprint(resolved, 'actnce_multihorizon', 'critic', 0, 1024, 0)
+    assert lib.fingerprint_matches(critic, dict(critic))[0]
+    # A different seed or batch size is a different run.
+    for field_name, value in (('seed', 1), ('batch_size', 256)):
+        assert not lib.fingerprint_matches(critic, dict(critic, **{field_name: value}))[0]
+
+
+def test_sweep_queue_shares_stages_and_has_no_duplicates():
+    """latent_rf_sparse must be actnce_multihorizon plus a flow, not a copy."""
+
+    lib = _sweep_lib()
+
+    for base, extended in (
+        ('actnce_multihorizon', 'latent_rf_sparse'),
+        ('sa_cl_bc_actnce', 'latent_rf_actnce'),
+    ):
+        assert lib.critic_signature(base) == lib.critic_signature(extended)
+        assert lib.actor_signature(base) == lib.actor_signature(extended)
+        assert lib.flow_signature(base) is None
+        assert lib.flow_signature(extended) is not None
+
+    # The four core variants share exactly one critic between the three that
+    # have one, and keep three distinct actors.
+    core = ('gcbc', 'actnce_local', 'actnce_multihorizon', 'latent_rf_sparse')
+    assert lib.critic_signature('gcbc') is None
+    assert len({lib.critic_signature(v) for v in core if lib.critic_signature(v)}) == 1
+    assert len({lib.actor_signature(v) for v in core}) == 3
+
+    assert lib.stage_plan('gcbc') == ('actor',)
+    assert lib.stage_plan('actnce_multihorizon') == ('critic', 'actor')
+    assert lib.stage_plan('latent_rf_sparse') == ('critic', 'actor', 'flow')
 
 
 # ----------------------------------------------------------------------

@@ -132,6 +132,11 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], list[str], list[str]]:
         lambda: defaultdict(list)
     )
     seeds: dict[tuple[str, str], set[int]] = defaultdict(set)
+    # Raw (successes, episodes) totals, so a small-sample rate can be read as
+    # the count it actually is rather than as a precise-looking percentage.
+    counts: dict[tuple[str, str], dict[str, list[int]]] = defaultdict(
+        lambda: defaultdict(lambda: [0, 0])
+    )
     success_columns: set[str] = set()
     family_columns: set[tuple[str, str]] = set()
 
@@ -161,6 +166,10 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], list[str], list[str]]:
             column = _success_column(path, payload)
             success_columns.add(column)
             grouped[key][column].append(float(value))
+            episodes = payload.get('evaluation/episodes')
+            if isinstance(episodes, list):
+                counts[key][column][0] += int(sum(episodes))
+                counts[key][column][1] += len(episodes)
 
         if diagnostics is not None:
             present = _family_columns(diagnostics)
@@ -182,6 +191,8 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], list[str], list[str]]:
             mean, std = _mean_std(metrics.get(column, []))
             row[f'{column}_success_mean'] = mean
             row[f'{column}_success_std'] = std
+            successes, episodes = counts[(env_name, variant)][column]
+            row[f'{column}_count'] = f'{successes}/{episodes}' if episodes else '-'
         for column, _ in (*_DIAGNOSTIC_COLUMNS, *ordered_families):
             mean, std = _mean_std(metrics.get(column, []))
             row[f'{column}_mean'] = mean
@@ -204,9 +215,13 @@ def _headers(success_columns: list[str], family_columns: list[str]) -> list[str]
         'variant',
         'num_seeds',
         *[
-            f'{column}_success_{statistic}'
+            name
             for column in success_columns
-            for statistic in ('mean', 'std')
+            for name in (
+                f'{column}_success_mean',
+                f'{column}_success_std',
+                f'{column}_count',
+            )
         ],
         *[f'{column}_mean' for column, _ in _DIAGNOSTIC_COLUMNS],
         *[f'{column}_mean' for column in family_columns],

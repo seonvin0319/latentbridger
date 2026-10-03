@@ -10,6 +10,12 @@ The research protocol is staged::
 ``--restore_path`` restores module parameters only.  Each stage builds a fresh
 optimizer in which non-stage modules are routed through ``optax.set_to_zero``,
 so a frozen module is bit-identical before and after the stage.
+
+``--resume_path`` is different: it continues *the same stage* from where it
+stopped, restoring the optimizer state, the agent RNG, and the host sampler
+streams, and counting steps from the checkpoint's absolute step.  Extending a
+100k run to 1M therefore performs exactly 900k further updates rather than
+restarting the optimizer from a warm parameter vector.
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import signal
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -29,7 +36,7 @@ from ml_collections import config_flags
 
 from agents.latentbridger import LatentBridgerAgent, restore_latent_params
 from envs.env_utils import make_env_and_datasets
-from utils.flax_utils import resolve_checkpoint, save_agent
+from utils.flax_utils import resolve_checkpoint, restore_agent, save_agent
 from utils.latent_datasets import LatentBridgerDataset
 from utils.latent_evaluation import DEFAULT_TASK_IDS, evaluate_latent
 from utils.log_utils import CsvLogger, get_exp_name, get_flag_dict, setup_wandb
@@ -53,7 +60,18 @@ flags.DEFINE_integer(
     'Checkpoint step; required for a directory and inferred from an exact '
     'params_<step>.pkl file.',
 )
-flags.DEFINE_integer('train_steps', 100_000, 'Number of gradient updates.')
+flags.DEFINE_string(
+    'resume_path',
+    '',
+    'Same-stage continuation checkpoint; restores optimizer, RNG, and sampler '
+    'state and counts steps from the checkpoint step.',
+)
+flags.DEFINE_integer(
+    'resume_step',
+    0,
+    'Step of the continuation checkpoint; inferred from a params_<step>.pkl path.',
+)
+flags.DEFINE_integer('train_steps', 100_000, 'Total gradient updates, counted absolutely.')
 flags.DEFINE_integer('batch_size', 1024, 'Training batch size.')
 flags.DEFINE_integer('log_interval', 1_000, 'Training CSV/W&B logging interval.')
 flags.DEFINE_integer(
@@ -91,7 +109,7 @@ def _host_metrics(info) -> dict[str, float]:
     return metrics
 
 
-def _write_run_config(run_dir: str, config, agent_config) -> None:
+def _write_run_config(run_dir: str, config, agent_config, start_step: int = 0) -> None:
     payload = {
         'flags': get_flag_dict(),
         'agent': config.to_dict() if hasattr(config, 'to_dict') else dict(config),
@@ -100,7 +118,10 @@ def _write_run_config(run_dir: str, config, agent_config) -> None:
             for key, value in dict(agent_config).items()
         },
     }
-    with open(os.path.join(run_dir, 'flags.json'), 'w', encoding='utf-8') as file:
+    # A continuation keeps the original run's flags on disk; its own flags go
+    # to a separate file so the provenance of the first segment survives.
+    name = 'flags.json' if start_step == 0 else f'flags_resume_{start_step}.json'
+    with open(os.path.join(run_dir, name), 'w', encoding='utf-8') as file:
         json.dump(payload, file, indent=2, sort_keys=True, default=str)
         file.write('\n')
 
@@ -114,6 +135,15 @@ def _validate_runtime_flags() -> None:
         raise ValueError('restore_step cannot be negative.')
     if FLAGS.restore_step and not FLAGS.restore_path:
         raise ValueError('restore_step requires restore_path.')
+    if FLAGS.resume_step < 0:
+        raise ValueError('resume_step cannot be negative.')
+    if FLAGS.resume_step and not FLAGS.resume_path:
+        raise ValueError('resume_step requires resume_path.')
+    if FLAGS.resume_path and FLAGS.restore_path:
+        raise ValueError(
+            'resume_path continues this stage and restore_path seeds it from '
+            'the previous stage; set only one.'
+        )
     if FLAGS.log_interval < 1:
         raise ValueError('log_interval must be at least 1.')
     if FLAGS.eval_interval < 0 or FLAGS.save_interval < 0:
@@ -148,6 +178,7 @@ def main(_):
         action_low=env.action_space.low,
         action_high=env.action_space.high,
     )
+    start_step = 0
     if FLAGS.restore_path:
         # Parameters only: each stage owns its optimizer so frozen modules are
         # provably untouched.
@@ -157,6 +188,18 @@ def main(_):
             FLAGS.restore_step,
             restore_host_rng=False,
         )
+    elif FLAGS.resume_path:
+        # Same stage, so the optimizer state is the thing we most want back:
+        # restarting Adam from a warm parameter vector is a different
+        # optimization problem from continuing one.
+        _, start_step = resolve_checkpoint(FLAGS.resume_path, FLAGS.resume_step)
+        if start_step >= FLAGS.train_steps:
+            print(
+                f'Stage already trained to step {start_step} >= '
+                f'{FLAGS.train_steps}; nothing to do.'
+            )
+            return
+        agent = restore_agent(agent, FLAGS.resume_path, FLAGS.resume_step)
 
     if FLAGS.output_dir:
         run_dir = os.path.abspath(FLAGS.output_dir)
@@ -171,7 +214,7 @@ def main(_):
         )
     checkpoint_dir = os.path.join(run_dir, 'checkpoints')
     os.makedirs(checkpoint_dir, exist_ok=True)
-    _write_run_config(run_dir, config, agent.config)
+    _write_run_config(run_dir, config, agent.config, start_step)
 
     wandb_run = None
     if FLAGS.use_wandb:
@@ -183,12 +226,36 @@ def main(_):
             directory=run_dir,
         )
 
-    steps = range(1, FLAGS.train_steps + 1)
+    steps = range(start_step + 1, FLAGS.train_steps + 1)
     if FLAGS.use_tqdm:
-        steps = tqdm.tqdm(steps, smoothing=0.1, dynamic_ncols=True, desc=stage)
+        steps = tqdm.tqdm(
+            steps,
+            smoothing=0.1,
+            dynamic_ncols=True,
+            desc=f'{stage}@{start_step}' if start_step else stage,
+        )
 
-    train_logger = CsvLogger(os.path.join(run_dir, 'train.csv'))
-    eval_logger = CsvLogger(os.path.join(run_dir, 'eval.csv'))
+    # A long sweep gets interrupted.  Rather than lose the stage, record the
+    # request and let the training loop reach its next clean point, where the
+    # checkpoint it writes is a valid resume point like any other.
+    interrupted: list[str] = []
+
+    def _request_stop(signal_number, _frame):
+        if interrupted:
+            raise KeyboardInterrupt('Second interrupt; aborting immediately.')
+        interrupted.append(signal.Signals(signal_number).name)
+        print(
+            f'\n[main_latent] {interrupted[0]} received; checkpointing and '
+            'exiting at the next step.',
+            flush=True,
+        )
+
+    for signal_number in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signal_number, _request_stop)
+
+    # Continuing a stage must extend its learning curve, not truncate it.
+    train_logger = CsvLogger(os.path.join(run_dir, 'train.csv'), resume=start_step > 0)
+    eval_logger = CsvLogger(os.path.join(run_dir, 'eval.csv'), resume=start_step > 0)
     start_time = time.time()
     interval_start = start_time
     prefetch_pool = (
@@ -210,7 +277,7 @@ def main(_):
                 batch = next_batch_future.result()
                 next_batch_future = None
 
-            is_final = step == FLAGS.train_steps
+            is_final = step == FLAGS.train_steps or bool(interrupted)
             do_save = is_final or (
                 FLAGS.save_interval > 0 and step % FLAGS.save_interval == 0
             )
@@ -258,6 +325,13 @@ def main(_):
                 save_agent(agent, checkpoint_dir, step)
                 if prefetch_pool is not None and not is_final:
                     next_batch_future = _submit_batch()
+            if interrupted:
+                print(
+                    f'[main_latent] stopped at step {step}; resume with '
+                    f'--resume_path={checkpoint_dir} --resume_step={step}',
+                    flush=True,
+                )
+                break
     finally:
         if prefetch_pool is not None:
             prefetch_pool.shutdown(wait=True)

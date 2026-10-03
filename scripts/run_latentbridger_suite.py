@@ -31,6 +31,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from agents.latentbridger import VARIANTS, VARIANT_SETTINGS  # noqa: E402
+from utils.latent_evaluation import DEFAULT_TASK_IDS, episode_manifest  # noqa: E402
 
 PRESETS: dict[str, dict[str, int]] = {
     'smoke': dict(
@@ -106,11 +107,17 @@ def actor_signature(variant: str) -> str:
 
     settings = VARIANT_SETTINGS[variant]
     critic = critic_signature(variant) or 'nocritic'
-    offsets = '-'.join(str(int(offset)) for offset in settings['actor_goal_offsets'])
+    if settings['actor_goal_sampling'] == 'geometric':
+        horizon = f'geo{settings.get("actor_discount", 0.0):g}'
+    else:
+        offsets = '-'.join(
+            str(int(offset)) for offset in settings['actor_goal_offsets']
+        )
+        horizon = f'h{offsets}'
     return (
         f'actor_{critic}_{settings["actor_goal_input"]}'
         f'_{settings["actor_objective"]}_bc{settings["actor_bc_coef"]:g}'
-        f'_h{offsets}'
+        f'_{horizon}'
     )
 
 
@@ -232,6 +239,31 @@ def main() -> int:
         'flow': preset['flow_steps'],
     }
 
+    # One paired episode manifest per seed, written once and handed to every
+    # variant, so a success difference is a policy difference and not a
+    # difference in which episodes each policy happened to face.
+    manifest_dir = suite_root / 'manifests'
+    manifest_paths: dict[int, Path] = {}
+    for seed in seeds:
+        manifest_path = manifest_dir / f'seed{seed}.json'
+        manifest_paths[seed] = manifest_path
+        if args.dry_run or manifest_path.is_file():
+            continue
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            'seed': int(seed),
+            'task_ids': list(DEFAULT_TASK_IDS),
+            'episodes_per_task': int(preset['eval_episodes']),
+            'episodes': episode_manifest(
+                DEFAULT_TASK_IDS,
+                int(preset['eval_episodes']),
+                int(seed),
+            ),
+        }
+        with manifest_path.open('w', encoding='utf-8') as file:
+            json.dump(payload, file, indent=2)
+            file.write('\n')
+
     suite_started = time.time()
     completed: list[dict[str, object]] = []
     # Stage checkpoints keyed by (stage signature, seed).  Any two variants with
@@ -331,6 +363,7 @@ def main() -> int:
                     f'--mode={mode}',
                     f'--episodes={preset["eval_episodes"]}',
                     f'--seed={seed}',
+                    f'--manifest_path={manifest_paths[seed]}',
                     f'--output_path={eval_path}',
                 ]
                 if interval is not None:
@@ -360,10 +393,14 @@ def main() -> int:
                     for mode, interval in eval_jobs(variant, replan_intervals)
                     if mode == 'latent_flow'
                 ],
+                'actor_goal_sampling': VARIANT_SETTINGS[variant][
+                    'actor_goal_sampling'
+                ],
                 'actor_goal_offsets': list(
                     VARIANT_SETTINGS[variant]['actor_goal_offsets']
                 ),
                 'flow_target_mode': VARIANT_SETTINGS[variant]['flow_target_mode'],
+                'episode_manifest': str(manifest_paths[seed]),
             }
             completed.append(record)
             if not args.dry_run:

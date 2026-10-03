@@ -15,6 +15,8 @@ Three independent goal streams are produced per anchor transition:
     drawn from an explicit multi-horizon set such as ``{1, 2, 4, 8, 16}``;
     otherwise it is uniform in ``[1, actor_goal_max_offset]``, whose default of
     one makes the actor target exactly the next observation.
+    ``actor_goal_sampling='geometric'`` replaces both with
+    ``Delta ~ Geometric(1 - actor_discount)`` truncated at the terminal.
 ``bridge_goals`` / ``bridge_targets``
     An ordinary trajectory-future conditioning goal and the state prefix used
     to supervise the latent flow.  ``flow_target_mode='consecutive'`` takes
@@ -41,6 +43,7 @@ from utils.datasets import Dataset
 _ACTION_HORIZON = 5
 FUTURE_SAMPLING_MODES = ('geometric', 'uniform', 'trajectory')
 FLOW_TARGET_MODES = ('consecutive', 'sparse')
+ACTOR_GOAL_SAMPLING_MODES = ('offsets', 'geometric')
 
 
 def sparse_prefix_offsets(horizon: int, action_horizon: int) -> tuple[int, ...]:
@@ -97,8 +100,10 @@ class LatentBridgerDatasetConfig:
 
     discount: float
     future_sampling: str = 'geometric'
+    actor_goal_sampling: str = 'offsets'
     actor_goal_max_offset: int = 1
     actor_goal_offsets: tuple[int, ...] = ()
+    actor_discount: float = 0.0
     bridge_goal_sampling: str = 'trajectory'
     action_horizon: int = _ACTION_HORIZON
     flow_target_mode: str = 'consecutive'
@@ -128,6 +133,22 @@ class LatentBridgerDataset:
         self.action_horizon = int(
             _config_get(self.config, 'action_horizon', _ACTION_HORIZON)
         )
+        self.actor_goal_sampling = str(
+            _config_get(self.config, 'actor_goal_sampling', 'offsets')
+        ).lower()
+        if self.actor_goal_sampling not in ACTOR_GOAL_SAMPLING_MODES:
+            raise ValueError(
+                'actor_goal_sampling must be one of '
+                f'{ACTOR_GOAL_SAMPLING_MODES}, got {self.actor_goal_sampling!r}.'
+            )
+        # A zero actor_discount means "track the critic's discount", so the
+        # geometric actor starts at the horizon the critic was trained for.
+        actor_discount = float(_config_get(self.config, 'actor_discount', 0.0))
+        self.actor_discount = actor_discount or self.discount
+        if not 0.0 < self.actor_discount < 1.0:
+            raise ValueError(
+                f'actor_discount must lie in (0, 1), got {self.actor_discount}.'
+            )
         self.horizon = int(_config_get(self.config, 'horizon', 40))
         self.flow_target_mode = str(
             _config_get(self.config, 'flow_target_mode', 'consecutive')
@@ -266,8 +287,17 @@ class LatentBridgerDataset:
         from the offsets that still fit inside its episode, so a short suffix
         falls back to the nearer horizons instead of being clipped onto the
         terminal state (which would silently over-sample the episode end).
+        ``actor_goal_sampling='geometric'`` instead draws
+        ``Delta ~ Geometric(1 - actor_discount)``, truncated at the terminal:
+        a smooth horizon distribution rather than five discrete rungs.
         """
 
+        if self.actor_goal_sampling == 'geometric':
+            offsets = np.random.geometric(
+                p=1.0 - self.actor_discount,
+                size=len(remaining),
+            ).astype(np.int64)
+            return np.minimum(offsets, remaining)
         if not self.actor_goal_offsets:
             return self._uniform_positive_offsets(
                 np.minimum(self.actor_goal_max_offset, remaining)
@@ -288,13 +318,14 @@ class LatentBridgerDataset:
         idxs: np.ndarray,
         finals: np.ndarray,
         mode: str,
+        discount: float | None = None,
     ) -> np.ndarray:
         """Sample ``s_{t+Delta}`` with ``Delta >= 1`` inside the same episode."""
 
         remaining = finals - idxs
         if mode == 'geometric':
             offsets = np.random.geometric(
-                p=1.0 - self.discount,
+                p=1.0 - (self.discount if discount is None else float(discount)),
                 size=len(idxs),
             ).astype(np.int64)
             return np.minimum(idxs + offsets, finals)
@@ -415,6 +446,7 @@ class LatentBridgerDataset:
 
 
 __all__ = [
+    'ACTOR_GOAL_SAMPLING_MODES',
     'FLOW_TARGET_MODES',
     'FUTURE_SAMPLING_MODES',
     'LatentBridgerDataset',
