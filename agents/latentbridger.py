@@ -53,6 +53,7 @@ VARIANTS = (
     'sa_cl_bc',
     'sa_cl_bc_actnce',
     'latent_rf',
+    'latent_rf_actnce',
 )
 CRITIC_TYPES = ('none', 'state', 'sa')
 ACTOR_GOAL_INPUTS = ('raw', 'latent')
@@ -113,6 +114,17 @@ VARIANT_SETTINGS: dict[str, dict[str, Any]] = {
         actor_objective='contrastive',
         actor_bc_coef=10.0,
         action_nce_coef=0.0,
+        use_flow=True,
+        eval_mode='latent_flow',
+    ),
+    # Module B on top of the action-sensitive critic.  Kept as its own variant
+    # so the original latent_rf result stays intact and comparable.
+    'latent_rf_actnce': dict(
+        critic_type='sa',
+        actor_goal_input='latent',
+        actor_objective='contrastive',
+        actor_bc_coef=10.0,
+        action_nce_coef=1.0,
         use_flow=True,
         eval_mode='latent_flow',
     ),
@@ -988,6 +1000,12 @@ class LatentBridgerAgent(flax.struct.PyTreeNode):
             raise ValueError('flow_steps must be at least 1.')
         if float(config['flow_noise_scale']) < 0.0:
             raise ValueError('flow_noise_scale must be non-negative.')
+        replan_interval = int(config.setdefault('replan_interval', action_horizon))
+        if not 1 <= replan_interval <= action_horizon:
+            raise ValueError(
+                'replan_interval must lie in [1, action_horizon] = '
+                f'[1, {action_horizon}], got {replan_interval}.'
+            )
         if int(config['num_action_negatives']) < 1:
             raise ValueError('num_action_negatives must be at least 1.')
         discount = float(config['discount'])
@@ -1239,6 +1257,7 @@ def get_config() -> ml_collections.ConfigDict:
             flow_noise_scale=1.0,
             flow_renormalize=True,
             flow_stop_psi_gradient=True,
+            replan_interval=5,
             # Optimization and evaluation.
             learning_rate=3e-4,
             eval_mode='direct_goal',

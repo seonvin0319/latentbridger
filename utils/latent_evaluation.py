@@ -11,12 +11,17 @@ Both modes here are closed-loop at every environment step:
 ``latent_flow``
     Generate a five-step latent prefix ``z_1..z_5`` from the *current* state,
     then execute ``a_i = pi(s_i, z_i)`` against the *actual* updated state
-    ``s_i``, and replan a fresh prefix after at most five actions.
+    ``s_i``, and replan a fresh prefix after at most ``replan_interval``
+    actions.  ``replan_interval=5`` consumes the whole prefix before replanning;
+    ``replan_interval=1`` keeps only ``z_1`` from each generated prefix, which
+    isolates how much of the flow's value comes from the first latent step
+    versus the rest of the prefix.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from functools import partial
 from typing import Any
 
 import jax
@@ -111,6 +116,7 @@ def _latent_flow_episode(
     action_high: np.ndarray,
     max_episode_steps: int,
     rng,
+    replan_interval: int,
 ) -> tuple[bool, int, Any]:
     observation = np.asarray(observation, dtype=np.float32).reshape(-1)
     goal = np.asarray(goal, dtype=np.float32).reshape(-1)
@@ -135,7 +141,7 @@ def _latent_flow_episode(
                 f'got {prefix.shape}.'
             )
         replans += 1
-        for latent in prefix[0]:
+        for latent in prefix[0, :replan_interval]:
             if step >= max_episode_steps or terminated or truncated:
                 break
             # The latent target is open-loop within the chunk, but the state
@@ -159,6 +165,7 @@ def evaluate_latent(
     task_ids: Sequence[int] = DEFAULT_TASK_IDS,
     episodes_per_task: int = 10,
     seed: int = 0,
+    replan_interval: int | None = None,
 ) -> dict[str, float | int | str]:
     """Evaluate LatentBridger on the five OGBench tasks."""
 
@@ -170,6 +177,11 @@ def evaluate_latent(
         raise ValueError('task_ids must contain at least one task.')
     if int(episodes_per_task) < 1:
         raise ValueError('episodes_per_task must be at least 1.')
+
+    action_horizon = int(agent.config['action_horizon'])
+    if replan_interval is None:
+        replan_interval = int(agent.config['replan_interval'])
+    replan_interval = int(replan_interval)
     if mode == 'latent_flow':
         if not bool(agent.config['use_flow']):
             raise ValueError(
@@ -179,12 +191,21 @@ def evaluate_latent(
             raise ValueError(
                 "mode='latent_flow' requires a latent-conditioned actor."
             )
+        if not 1 <= replan_interval <= action_horizon:
+            raise ValueError(
+                'replan_interval must lie in [1, action_horizon] = '
+                f'[1, {action_horizon}], got {replan_interval}.'
+            )
 
     action_low = np.asarray(env.action_space.low, dtype=np.float32)
     action_high = np.asarray(env.action_space.high, dtype=np.float32)
     max_episode_steps = _max_episode_steps(env)
     rng = jax.random.PRNGKey(int(seed))
-    episode_fn = _direct_goal_episode if mode == 'direct_goal' else _latent_flow_episode
+    episode_fn = (
+        _direct_goal_episode
+        if mode == 'direct_goal'
+        else partial(_latent_flow_episode, replan_interval=replan_interval)
+    )
 
     metrics: dict[str, float | int | str] = {}
     task_success_rates = []
@@ -218,6 +239,8 @@ def evaluate_latent(
     metrics['num_tasks'] = len(task_ids)
     metrics['episodes_per_task'] = int(episodes_per_task)
     metrics['mode'] = mode
+    if mode == 'latent_flow':
+        metrics['replan_interval'] = replan_interval
     return metrics
 
 

@@ -93,13 +93,36 @@ def critic_signature(variant: str) -> str | None:
     return f'critic_{settings["critic_type"]}_actnce{settings["action_nce_coef"]:g}'
 
 
-def eval_modes(variant: str) -> tuple[str, ...]:
-    """Always run the Module-A test; add the latent-flow test when applicable."""
+def actor_signature(variant: str) -> str:
+    """Identify variants whose actor stage is the same computation.
 
-    modes = ['direct_goal']
+    ``latent_rf`` is ``sa_cl_bc`` plus Module B, and ``latent_rf_actnce`` is
+    ``sa_cl_bc_actnce`` plus Module B.  In both pairs the actor stage is the
+    same objective trained against the same frozen critic, so the flow must be
+    built on the *same* controller rather than on a separately trained copy.
+    """
+
+    settings = VARIANT_SETTINGS[variant]
+    critic = critic_signature(variant) or 'nocritic'
+    return (
+        f'actor_{critic}_{settings["actor_goal_input"]}'
+        f'_{settings["actor_objective"]}_bc{settings["actor_bc_coef"]:g}'
+    )
+
+
+def eval_jobs(variant: str, replan_intervals: tuple[int, ...]) -> tuple[tuple[str, int | None], ...]:
+    """(mode, replan_interval) pairs to evaluate, as (name, interval)."""
+
+    jobs: list[tuple[str, int | None]] = [('direct_goal', None)]
     if VARIANT_SETTINGS[variant]['use_flow']:
-        modes.append('latent_flow')
-    return tuple(modes)
+        jobs.extend(('latent_flow', interval) for interval in replan_intervals)
+    return tuple(jobs)
+
+
+def eval_result_name(mode: str, replan_interval: int | None) -> str:
+    if replan_interval is None:
+        return f'eval_{mode}.json'
+    return f'eval_{mode}_r{replan_interval}.json'
 
 
 def _parse_args() -> argparse.Namespace:
@@ -111,8 +134,13 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         '--variants',
-        default='gcbc,state_cl,sa_cl,sa_cl_bc,sa_cl_bc_actnce,latent_rf',
+        default=','.join(VARIANTS),
         help='Comma-separated variant names.',
+    )
+    parser.add_argument(
+        '--replan_intervals',
+        default='5',
+        help='Comma-separated latent-flow replan intervals to evaluate.',
     )
     parser.add_argument('--seeds', default='0', help='Comma-separated seeds.')
     parser.add_argument(
@@ -179,6 +207,11 @@ def main() -> int:
     seeds = [int(value) for value in args.seeds.split(',') if value.strip()]
     if not seeds:
         raise SystemExit('--seeds must contain at least one seed.')
+    replan_intervals = tuple(
+        int(value) for value in args.replan_intervals.split(',') if value.strip()
+    )
+    if not replan_intervals or any(interval < 1 for interval in replan_intervals):
+        raise SystemExit('--replan_intervals must be positive integers.')
 
     env_stem = Path(config_path).stem
     suite_root = (_REPO_ROOT / args.save_dir / env_stem).resolve()
@@ -191,24 +224,28 @@ def main() -> int:
 
     suite_started = time.time()
     completed: list[dict[str, object]] = []
-    shared_critics: dict[tuple[str, int], Path] = {}
+    # Stage checkpoints keyed by (stage signature, seed).  Any two variants with
+    # the same signature run that stage once and share the result.
+    shared_stages: dict[tuple[str, str, int], Path] = {}
     for variant in variants:
         agent_flag = f'{config_path}:{variant}'
         signature = critic_signature(variant)
+        signatures = {'critic': str(signature), 'actor': actor_signature(variant)}
         for seed in seeds:
             run_root = suite_root / variant / f'seed{seed}'
             results_dir = run_root / 'results'
             results_dir.mkdir(parents=True, exist_ok=True)
             previous_checkpoint: Path | None = None
-            critic_source: str | None = None
+            stage_sources: dict[str, str] = {}
 
             for stage in stage_plan(variant):
                 steps = stage_steps[stage]
-                if stage == 'critic':
-                    # One Module A per critic signature, shared by every
-                    # variant that would otherwise retrain the same thing.
-                    stage_dir = suite_root / '_shared' / str(signature) / f'seed{seed}'
-                    cached = shared_critics.get((str(signature), seed))
+                stage_signature = signatures.get(stage)
+                if stage_signature is not None:
+                    stage_dir = (
+                        suite_root / '_shared' / stage_signature / f'seed{seed}'
+                    )
+                    cached = shared_stages.get((stage, stage_signature, seed))
                 else:
                     stage_dir = run_root / stage
                     cached = None
@@ -217,14 +254,14 @@ def main() -> int:
                 if cached is not None:
                     print(f'[latentbridger] share {cached}', flush=True)
                     previous_checkpoint = cached
-                    critic_source = str(cached)
+                    stage_sources[stage] = str(cached)
                     continue
                 if args.skip_existing and checkpoint.is_file():
                     print(f'[latentbridger] reuse {checkpoint}', flush=True)
                     previous_checkpoint = checkpoint
-                    if stage == 'critic':
-                        shared_critics[(str(signature), seed)] = checkpoint
-                        critic_source = str(checkpoint)
+                    if stage_signature is not None:
+                        shared_stages[(stage, stage_signature, seed)] = checkpoint
+                    stage_sources[stage] = str(checkpoint)
                     continue
 
                 command = [
@@ -249,9 +286,9 @@ def main() -> int:
                     command.append(f'--restore_path={previous_checkpoint}')
                 _run(command, log_path=command_log, dry_run=args.dry_run)
                 previous_checkpoint = checkpoint
-                if stage == 'critic':
-                    shared_critics[(str(signature), seed)] = checkpoint
-                    critic_source = str(checkpoint)
+                if stage_signature is not None:
+                    shared_stages[(stage, stage_signature, seed)] = checkpoint
+                stage_sources[stage] = str(checkpoint)
 
             if previous_checkpoint is None:
                 raise RuntimeError(f'Variant {variant!r} produced no checkpoint.')
@@ -272,8 +309,8 @@ def main() -> int:
                     command.append(f'--dataset_dir={args.dataset_dir}')
                 _run(command, log_path=command_log, dry_run=args.dry_run)
 
-            for mode in eval_modes(variant):
-                eval_path = results_dir / f'eval_{mode}.json'
+            for mode, interval in eval_jobs(variant, replan_intervals):
+                eval_path = results_dir / eval_result_name(mode, interval)
                 if args.skip_existing and eval_path.is_file():
                     continue
                 command = [
@@ -286,6 +323,8 @@ def main() -> int:
                     f'--seed={seed}',
                     f'--output_path={eval_path}',
                 ]
+                if interval is not None:
+                    command.append(f'--replan_interval={interval}')
                 if args.dataset_dir:
                     command.append(f'--dataset_dir={args.dataset_dir}')
                 _run(command, log_path=command_log, dry_run=args.dry_run)
@@ -304,7 +343,9 @@ def main() -> int:
                 'final_checkpoint': str(previous_checkpoint),
                 'results_dir': str(results_dir),
                 'critic_signature': signature,
-                'critic_checkpoint': critic_source,
+                'actor_signature': signatures['actor'],
+                'stage_checkpoints': stage_sources,
+                'replan_intervals': list(replan_intervals),
             }
             completed.append(record)
             if not args.dry_run:

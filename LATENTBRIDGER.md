@@ -202,7 +202,8 @@ are closed-loop at every environment step.
   one.
 - `latent_flow` — generate `z_1..z_5` from the *current* observation, execute
   `a_i = pi(s_i, z_i)` against the *actual* updated state `s_i`, replan after at
-  most five actions. Five actions are never precomputed from a stale state.
+  most `replan_interval` actions. Actions are never precomputed from a stale
+  state: only the latent *target* is open-loop within a chunk.
 
 ## Architecture
 
@@ -250,11 +251,14 @@ after an update, and the smoke run confirms it on real checkpoints.
 | `sa_cl_bc` | `phi_sa(s,a)^T psi(g)` | `psi(g)` | contrastive | 10.0 | 0.0 | no | **primary Module-A candidate** |
 | `sa_cl_bc_actnce` | `phi_sa(s,a)^T psi(g)` | `psi(g)` | contrastive | 10.0 | 1.0 | no | does action sensitivity need explicit supervision? |
 | `latent_rf` | `phi_sa(s,a)^T psi(g)` | generated `z_i` | contrastive | 10.0 | 0.0 | **yes** | does latent RF bridging add anything? |
+| `latent_rf_actnce` | `phi_sa(s,a)^T psi(g)` | generated `z_i` | contrastive | 10.0 | 1.0 | **yes** | does Module B need an action-sensitive critic underneath? |
 
 The table is built so each neighbouring comparison moves one knob.
 `sa_cl` and `sa_cl_bc` differ only in `actor_bc_coef`; `sa_cl_bc` and
 `sa_cl_bc_actnce` differ only in `action_nce_coef`; `latent_rf` differs from
-`sa_cl_bc` only by adding Module B.
+`sa_cl_bc` only by adding Module B; `latent_rf_actnce` differs from
+`sa_cl_bc_actnce` only by adding Module B, and from `latent_rf` only in
+`action_nce_coef`.
 `test_variant_table_isolates_one_knob_per_comparison` asserts this against
 `VARIANT_SETTINGS` so the property cannot rot.
 
@@ -264,13 +268,39 @@ Same dataset, same train/validation split, same batch size, same seed, same
 per-stage update budget, same architecture scale, same five OGBench task IDs.
 No online data, no reward, no TRL target.
 
-One subtlety the runner handles for you: `sa_cl`, `sa_cl_bc`, and `latent_rf`
-have *identical* critic stages, and separate processes do not reproduce each
-other bitwise because XLA's GPU autotuner selects kernels by measured timing.
-Rather than train three nominally-identical critics that drift apart in the
-low-order bits, the runner trains one critic per *critic signature*
-(`critic_type`, `action_nce_coef`) and shares the checkpoint. `latent_rf`
-therefore provably uses the exact trained Module A that `sa_cl_bc` uses.
+One subtlety the runner handles for you. Several variants share whole stages:
+`sa_cl`, `sa_cl_bc`, and `latent_rf` have identical *critic* stages, and
+`latent_rf` additionally has the same *actor* stage as `sa_cl_bc` (likewise
+`latent_rf_actnce` and `sa_cl_bc_actnce`). Separate processes do not reproduce
+each other bitwise, because XLA's GPU autotuner selects kernels by measured
+timing and the resulting low-order differences compound over 100k updates.
+
+Rather than train nominally-identical stages that drift apart, the runner keys
+each stage by a signature and trains it once:
+
+- critic signature: `(critic_type, action_nce_coef)`
+- actor signature: `(critic signature, actor_goal_input, actor_objective, actor_bc_coef)`
+
+Shared checkpoints land in `_shared/<signature>/seed<N>/`. `latent_rf`
+therefore provably reuses the exact Module-A representation **and controller**
+that `sa_cl_bc` was evaluated with, so any difference between them is Module B
+and nothing else.
+
+### Replan interval
+
+`latent_flow` evaluation takes `--replan_interval` (config default
+`replan_interval=5`, the full action horizon). It is an evaluation-time knob,
+not a training one: the same trained flow is driven at different replanning
+rates.
+
+- `replan_interval=5` executes the whole generated prefix before replanning.
+- `replan_interval=1` keeps only `z_1` from each prefix and regenerates from
+  the new actual state every step.
+
+Comparing the two separates "the flow produces a useful *next* latent" from
+"the flow produces a useful five-step *prefix*". If `r=1` matches or beats
+`r=5`, the later prefix entries are not carrying their weight and the joint
+five-step formulation is not earning its complexity.
 
 ## Diagnostics
 
@@ -326,12 +356,19 @@ python evaluate_latent.py \
     --mode=direct_goal --episodes=50 --seed=0 \
     --output_path=exp/lb/cube_single/sa_cl_bc/seed0/results/eval_direct_goal.json
 
-# Receding-horizon latent-flow evaluation.
+# Receding-horizon latent-flow evaluation (replan every 5 actions).
 python evaluate_latent.py \
     --agent=configs/latent/cube_single.py:latent_rf \
     --checkpoint_dir=exp/lb/cube_single/latent_rf/seed0/flow/checkpoints/params_100000.pkl \
-    --mode=latent_flow --episodes=50 --seed=0 \
-    --output_path=exp/lb/cube_single/latent_rf/seed0/results/eval_latent_flow.json
+    --mode=latent_flow --replan_interval=5 --episodes=50 --seed=0 \
+    --output_path=exp/lb/cube_single/latent_rf/seed0/results/eval_latent_flow_r5.json
+
+# Same flow, replanning every single action.
+python evaluate_latent.py \
+    --agent=configs/latent/cube_single.py:latent_rf \
+    --checkpoint_dir=exp/lb/cube_single/latent_rf/seed0/flow/checkpoints/params_100000.pkl \
+    --mode=latent_flow --replan_interval=1 --episodes=50 --seed=0 \
+    --output_path=exp/lb/cube_single/latent_rf/seed0/results/eval_latent_flow_r1.json
 
 # Offline diagnostics on the held-out split.
 python diagnose_latent.py \
@@ -363,9 +400,16 @@ python scripts/summarize_latentbridger.py --root exp/latentbridger_pilot
 ```
 
 Runner flags: `--config`, `--variants`, `--seeds`, `--preset`, `--dataset_dir`,
-`--save_dir`, `--use_wandb`, `--skip_existing`, plus `--diagnostic_split` and
-`--dry_run`. A failed subprocess aborts the suite; partial results are never
-summarized as complete.
+`--save_dir`, `--use_wandb`, `--skip_existing`, plus `--replan_intervals`,
+`--diagnostic_split`, and `--dry_run`. A failed subprocess aborts the suite;
+partial results are never summarized as complete.
+
+```bash
+# Both replanning rates for the flow variants.
+python scripts/run_latentbridger_suite.py \
+    --config configs/latent/cube_double.py --seeds 0,1,2 \
+    --preset pilot --replan_intervals 1,5 --save_dir exp/
+```
 
 | Preset | critic | actor | flow | eval episodes | batch |
 | --- | --- | --- | --- | --- | --- |
@@ -381,18 +425,20 @@ summarized as complete.
     commands.log
     summary.csv                        # written by summarize_latentbridger.py
     summary.md
-    _shared/<critic-signature>/seed<N>/ # one Module A per critic signature
+    _shared/<stage-signature>/seed<N>/  # one critic / actor per signature
         checkpoints/params_<steps>.pkl
         train.csv
         flags.json
     <variant>/seed<N>/
-        status.json                    # stages, budgets, critic provenance
-        actor/{checkpoints,train.csv,eval.csv,flags.json}
+        status.json                    # stages, budgets, stage provenance
         flow/{checkpoints,train.csv,eval.csv,flags.json}
         results/diagnostics.json
         results/eval_direct_goal.json
-        results/eval_latent_flow.json  # latent_rf only
+        results/eval_latent_flow_r<I>.json   # flow variants, one per interval
 ```
+
+`status.json` records the critic and actor signatures and the exact checkpoint
+each stage consumed, so a run's provenance is readable without re-deriving it.
 
 ## Configuration
 
@@ -425,6 +471,7 @@ flow_steps              = 8
 flow_noise_scale        = 1.0
 flow_renormalize        = True
 flow_stop_psi_gradient  = True
+replan_interval         = 5        # evaluation-time; 1 <= r <= action_horizon
 
 learning_rate           = 3e-4
 ```

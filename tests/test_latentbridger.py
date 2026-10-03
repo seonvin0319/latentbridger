@@ -8,6 +8,8 @@ being inferred from the sampler's own bookkeeping.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -453,6 +455,168 @@ def test_variant_table_isolates_one_knob_per_comparison():
     assert difference('sa_cl', 'sa_cl_bc') == {'actor_bc_coef'}
     assert difference('sa_cl_bc', 'sa_cl_bc_actnce') == {'action_nce_coef'}
     assert difference('sa_cl_bc', 'latent_rf') == {'use_flow', 'eval_mode'}
+    # latent_rf_actnce is Module B on the action-sensitive critic, and differs
+    # from latent_rf by exactly the action-NCE coefficient.
+    assert difference('sa_cl_bc_actnce', 'latent_rf_actnce') == {
+        'use_flow',
+        'eval_mode',
+    }
+    assert difference('latent_rf', 'latent_rf_actnce') == {'action_nce_coef'}
+
+
+def test_suite_runner_shares_critic_and_actor_across_variants():
+    """The flow variants must build on the controller they claim to extend."""
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        'run_latentbridger_suite',
+        Path(__file__).resolve().parents[1] / 'scripts' / 'run_latentbridger_suite.py',
+    )
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+
+    for base, extended in (
+        ('sa_cl_bc', 'latent_rf'),
+        ('sa_cl_bc_actnce', 'latent_rf_actnce'),
+    ):
+        assert runner.critic_signature(base) == runner.critic_signature(extended)
+        assert runner.actor_signature(base) == runner.actor_signature(extended)
+
+    # Variants that should *not* share must stay separate.
+    assert runner.critic_signature('sa_cl_bc') != runner.critic_signature(
+        'sa_cl_bc_actnce'
+    )
+    assert runner.actor_signature('sa_cl') != runner.actor_signature('sa_cl_bc')
+    assert runner.critic_signature('gcbc') is None
+
+    assert runner.eval_jobs('sa_cl_bc', (1, 5)) == (('direct_goal', None),)
+    assert runner.eval_jobs('latent_rf_actnce', (1, 5)) == (
+        ('direct_goal', None),
+        ('latent_flow', 1),
+        ('latent_flow', 5),
+    )
+
+
+# ----------------------------------------------------------------------
+# Receding-horizon latent control
+# ----------------------------------------------------------------------
+class _CountingAgent:
+    """Forward everything to the agent while counting flow replans."""
+
+    def __init__(self, agent):
+        self._agent = agent
+        self.replans = 0
+
+    def __getattr__(self, name):
+        return getattr(self._agent, name)
+
+    def sample_latent_prefix(self, *args, **kwargs):
+        self.replans += 1
+        return self._agent.sample_latent_prefix(*args, **kwargs)
+
+
+class _StubEnv:
+    """A minimal OGBench-shaped environment that never reports success."""
+
+    class _Spec:
+        max_episode_steps = 20
+
+    class _ActionSpace:
+        def __init__(self, action_dim):
+            self.low = -np.ones(action_dim, dtype=np.float32)
+            self.high = np.ones(action_dim, dtype=np.float32)
+
+    def __init__(self, obs_dim, action_dim):
+        self.spec = self._Spec()
+        self.action_space = self._ActionSpace(action_dim)
+        self._obs_dim = obs_dim
+        self.steps = 0
+
+    def _observation(self):
+        return np.zeros(self._obs_dim, dtype=np.float32)
+
+    def reset(self, options=None):
+        self.steps = 0
+        return self._observation(), {'goal': self._observation()}
+
+    def step(self, action):
+        assert np.all(action >= self.action_space.low - 1e-5)
+        assert np.all(action <= self.action_space.high + 1e-5)
+        self.steps += 1
+        return self._observation(), 0.0, False, False, {'success': False}
+
+
+@pytest.mark.parametrize(
+    ('replan_interval', 'expected_replans'),
+    [(5, 4), (1, 20)],
+)
+def test_latent_flow_replans_from_the_actual_state(replan_interval, expected_replans):
+    from utils.latent_evaluation import evaluate_latent
+
+    dataset = _make_dataset()
+    config = _make_config('latent_rf')
+    sampler = LatentBridgerDataset(dataset, config)
+    batch = sampler.sample(8)
+    agent = _CountingAgent(_make_agent(config, batch, stage='flow'))
+    env = _StubEnv(_OBS_DIM, _ACTION_DIM)
+
+    metrics = evaluate_latent(
+        agent,
+        env,
+        mode='latent_flow',
+        task_ids=(1,),
+        episodes_per_task=1,
+        seed=0,
+        replan_interval=replan_interval,
+    )
+    # 20 environment steps consumed replan_interval latents at a time.
+    assert env.steps == _StubEnv._Spec.max_episode_steps
+    assert agent.replans == expected_replans
+    assert metrics['replan_interval'] == replan_interval
+    assert metrics['overall_success'] == 0.0
+
+
+def test_direct_goal_mode_never_touches_the_flow():
+    from utils.latent_evaluation import evaluate_latent
+
+    dataset = _make_dataset()
+    config = _make_config('latent_rf')
+    sampler = LatentBridgerDataset(dataset, config)
+    batch = sampler.sample(8)
+    agent = _CountingAgent(_make_agent(config, batch, stage='flow'))
+    env = _StubEnv(_OBS_DIM, _ACTION_DIM)
+
+    evaluate_latent(agent, env, mode='direct_goal', task_ids=(1,), episodes_per_task=1)
+    assert agent.replans == 0
+    assert env.steps == _StubEnv._Spec.max_episode_steps
+
+
+def test_replan_interval_is_validated_against_the_action_horizon():
+    from utils.latent_evaluation import evaluate_latent
+
+    dataset = _make_dataset()
+    config = _make_config('latent_rf')
+    sampler = LatentBridgerDataset(dataset, config)
+    batch = sampler.sample(8)
+    agent = _make_agent(config, batch, stage='flow')
+    env = _StubEnv(_OBS_DIM, _ACTION_DIM)
+
+    with pytest.raises(ValueError, match='replan_interval'):
+        evaluate_latent(
+            agent,
+            env,
+            mode='latent_flow',
+            task_ids=(1,),
+            episodes_per_task=1,
+            replan_interval=6,
+        )
+    with pytest.raises(ValueError, match='replan_interval'):
+        _make_agent(
+            _make_config('latent_rf', replan_interval=0),
+            batch,
+            stage='flow',
+        )
 
 
 # ----------------------------------------------------------------------

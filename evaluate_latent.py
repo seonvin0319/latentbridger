@@ -34,6 +34,12 @@ flags.DEFINE_integer(
 )
 flags.DEFINE_string('dataset_dir', '', 'Optional OGBench dataset directory.')
 flags.DEFINE_string('mode', 'direct_goal', f'One of {EVAL_MODES}.')
+flags.DEFINE_integer(
+    'replan_interval',
+    0,
+    'Latent-flow actions executed per generated prefix; 0 uses the config '
+    'default (the full action horizon).',
+)
 flags.DEFINE_integer('episodes', 50, 'Episodes for each of the five predefined tasks.')
 flags.DEFINE_integer('seed', 0, 'Evaluation seed.')
 flags.DEFINE_string('output_path', '', 'Optional JSON result path.')
@@ -88,6 +94,7 @@ def main(_):
         task_ids=DEFAULT_TASK_IDS,
         episodes_per_task=FLAGS.episodes,
         seed=FLAGS.seed,
+        replan_interval=FLAGS.replan_interval or None,
     )
     result = {
         'checkpoint_step': checkpoint_step,
@@ -97,6 +104,8 @@ def main(_):
         'seed': int(FLAGS.seed),
         **{f'evaluation/{key}': value for key, value in metrics.items()},
     }
+    if 'replan_interval' in metrics:
+        result['replan_interval'] = int(metrics['replan_interval'])
     text = json.dumps(result, indent=2, sort_keys=True)
     print(text)
     if FLAGS.output_path:

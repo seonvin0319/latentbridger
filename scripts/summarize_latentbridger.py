@@ -30,10 +30,7 @@ _DIAGNOSTIC_COLUMNS: tuple[tuple[str, str], ...] = (
     ('actor_bc_mse', 'diagnostics/actor/bc_mse'),
     ('flow_prefix_mse', 'diagnostics/flow/prefix_latent_mse'),
 )
-_SUCCESS_COLUMNS: tuple[tuple[str, str], ...] = (
-    ('direct_goal', 'eval_direct_goal.json'),
-    ('latent_flow', 'eval_latent_flow.json'),
-)
+_DIRECT_GOAL_FILE = 'eval_direct_goal.json'
 
 
 def _parse_args() -> argparse.Namespace:
@@ -70,44 +67,65 @@ def _mean_std(values: list[float]) -> tuple[float, float]:
     return mean, math.sqrt(variance)
 
 
-def collect(root: Path) -> list[dict[str, Any]]:
+def _success_column(path: Path, payload: dict[str, Any]) -> str:
+    """Name the success column an evaluation file belongs to.
+
+    Latent-flow files are split by replan interval, so a suite that evaluated
+    several intervals gets one column each instead of silently averaging them.
+    """
+
+    if path.name == _DIRECT_GOAL_FILE:
+        return 'direct_goal'
+    interval = payload.get('replan_interval')
+    if interval is None:
+        interval = payload.get('evaluation/replan_interval')
+    if interval is None:
+        return 'latent_flow'
+    return f'latent_flow_r{int(interval)}'
+
+
+def collect(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
     """Group every per-seed result directory by (environment, variant)."""
 
     grouped: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
     seeds: dict[tuple[str, str], set[int]] = defaultdict(set)
+    success_columns: set[str] = set()
 
     for results_dir in sorted(root.rglob('results')):
         if not results_dir.is_dir():
             continue
-        payloads = {
-            name: _read_json(results_dir / name)
-            for name in ('diagnostics.json', *(file for _, file in _SUCCESS_COLUMNS))
-        }
-        identity = next(
-            (payload for payload in payloads.values() if payload is not None),
-            None,
-        )
+        evaluation_paths = sorted(results_dir.glob('eval_*.json'))
+        diagnostics = _read_json(results_dir / 'diagnostics.json')
+        evaluations = [
+            (path, payload)
+            for path in evaluation_paths
+            if (payload := _read_json(path)) is not None
+        ]
+        identity = diagnostics or (evaluations[0][1] if evaluations else None)
         if identity is None:
             continue
-        key = (str(identity.get('env_name', 'unknown')), str(identity.get('variant', 'unknown')))
+        key = (
+            str(identity.get('env_name', 'unknown')),
+            str(identity.get('variant', 'unknown')),
+        )
         seeds[key].add(int(identity.get('seed', -1)))
 
-        for column, filename in _SUCCESS_COLUMNS:
-            payload = payloads.get(filename)
-            if payload is None:
-                continue
+        for path, payload in evaluations:
             value = payload.get('evaluation/overall_success')
-            if value is not None:
-                grouped[key][column].append(float(value))
+            if value is None:
+                continue
+            column = _success_column(path, payload)
+            success_columns.add(column)
+            grouped[key][column].append(float(value))
 
-        diagnostics = payloads.get('diagnostics.json')
         if diagnostics is not None:
             for column, json_key in _DIAGNOSTIC_COLUMNS:
                 if json_key in diagnostics:
                     grouped[key][column].append(float(diagnostics[json_key]))
 
+    ordered_success = ['direct_goal'] + sorted(success_columns - {'direct_goal'})
     rows: list[dict[str, Any]] = []
     for (env_name, variant), metrics in sorted(grouped.items()):
         row: dict[str, Any] = {
@@ -115,7 +133,7 @@ def collect(root: Path) -> list[dict[str, Any]]:
             'variant': variant,
             'num_seeds': len(seeds[(env_name, variant)]),
         }
-        for column, _ in _SUCCESS_COLUMNS:
+        for column in ordered_success:
             mean, std = _mean_std(metrics.get(column, []))
             row[f'{column}_success_mean'] = mean
             row[f'{column}_success_std'] = std
@@ -124,7 +142,7 @@ def collect(root: Path) -> list[dict[str, Any]]:
             row[f'{column}_mean'] = mean
             row[f'{column}_std'] = std
         rows.append(row)
-    return rows
+    return rows, ordered_success
 
 
 def _format(value: Any, precision: int) -> str:
@@ -135,17 +153,26 @@ def _format(value: Any, precision: int) -> str:
     return str(value)
 
 
-def _render_table(rows: list[dict[str, Any]], precision: int) -> list[str]:
-    headers = [
+def _headers(success_columns: list[str]) -> list[str]:
+    return [
         'env_name',
         'variant',
         'num_seeds',
-        'direct_goal_success_mean',
-        'direct_goal_success_std',
-        'latent_flow_success_mean',
-        'latent_flow_success_std',
+        *[
+            f'{column}_success_{statistic}'
+            for column in success_columns
+            for statistic in ('mean', 'std')
+        ],
         *[f'{column}_mean' for column, _ in _DIAGNOSTIC_COLUMNS],
     ]
+
+
+def _render_table(
+    rows: list[dict[str, Any]],
+    success_columns: list[str],
+    precision: int,
+) -> list[str]:
+    headers = _headers(success_columns)
     table = [headers]
     table.extend(
         [_format(row.get(header), precision) for header in headers] for row in rows
@@ -157,7 +184,12 @@ def _render_table(rows: list[dict[str, Any]], precision: int) -> list[str]:
     ]
 
 
-def write_outputs(rows: list[dict[str, Any]], output_dir: Path, precision: int) -> None:
+def write_outputs(
+    rows: list[dict[str, Any]],
+    success_columns: list[str],
+    output_dir: Path,
+    precision: int,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     fieldnames = list(rows[0]) if rows else ['env_name', 'variant', 'num_seeds']
 
@@ -168,16 +200,7 @@ def write_outputs(rows: list[dict[str, Any]], output_dir: Path, precision: int) 
         for row in rows:
             writer.writerow(row)
 
-    headers = [
-        'env_name',
-        'variant',
-        'num_seeds',
-        'direct_goal_success_mean',
-        'direct_goal_success_std',
-        'latent_flow_success_mean',
-        'latent_flow_success_std',
-        *[f'{column}_mean' for column, _ in _DIAGNOSTIC_COLUMNS],
-    ]
+    headers = _headers(success_columns)
     lines = [
         '# LatentBridger summary',
         '',
@@ -199,12 +222,12 @@ def main() -> int:
     if not root.is_dir():
         raise SystemExit(f'Experiment root not found: {root}')
 
-    rows = collect(root)
+    rows, success_columns = collect(root)
     if not rows:
         raise SystemExit(f'No LatentBridger result files found under {root}.')
 
-    print('\n'.join(_render_table(rows, args.precision)))
-    write_outputs(rows, Path(args.output_dir or root), args.precision)
+    print('\n'.join(_render_table(rows, success_columns, args.precision)))
+    write_outputs(rows, success_columns, Path(args.output_dir or root), args.precision)
     return 0
 
 
