@@ -462,6 +462,21 @@ def test_variant_table_isolates_one_knob_per_comparison():
         'eval_mode',
     }
     assert difference('latent_rf', 'latent_rf_actnce') == {'action_nce_coef'}
+    # v1: the only thing separating local from multi-horizon is the offset set,
+    # and the only thing separating multi-horizon from the sparse bridge is
+    # Module B (plus the replanning rate that a sparse bridge forces).
+    assert difference('actnce_local', 'actnce_multihorizon') == {
+        'actor_goal_offsets'
+    }
+    assert difference('actnce_multihorizon', 'latent_rf_sparse') == {
+        'use_flow',
+        'eval_mode',
+        'flow_target_mode',
+        'replan_interval',
+    }
+    # actnce_local must be numerically the v0 action-NCE controller, so the two
+    # pilots remain comparable.
+    assert difference('sa_cl_bc_actnce', 'actnce_local') == set()
 
 
 def test_suite_runner_shares_critic_and_actor_across_variants():
@@ -479,6 +494,7 @@ def test_suite_runner_shares_critic_and_actor_across_variants():
     for base, extended in (
         ('sa_cl_bc', 'latent_rf'),
         ('sa_cl_bc_actnce', 'latent_rf_actnce'),
+        ('actnce_multihorizon', 'latent_rf_sparse'),
     ):
         assert runner.critic_signature(base) == runner.critic_signature(extended)
         assert runner.actor_signature(base) == runner.actor_signature(extended)
@@ -495,6 +511,209 @@ def test_suite_runner_shares_critic_and_actor_across_variants():
         ('direct_goal', None),
         ('latent_flow', 1),
         ('latent_flow', 5),
+    )
+    # The multi-horizon actor must not be confused with the local one.
+    assert runner.actor_signature('actnce_local') != runner.actor_signature(
+        'actnce_multihorizon'
+    )
+    # A sparse bridge is only defined at replan_interval=1, whatever is asked.
+    assert runner.eval_jobs('latent_rf_sparse', (1, 5)) == (
+        ('direct_goal', None),
+        ('latent_flow', 1),
+    )
+
+
+# ----------------------------------------------------------------------
+# v1: latent temporal-scale mismatch
+# ----------------------------------------------------------------------
+def test_sparse_prefix_offsets_span_the_planning_horizon():
+    from utils.latent_datasets import sparse_prefix_offsets
+
+    # The spec's worked example: PathBridger H=40 with a five-waypoint prefix.
+    assert sparse_prefix_offsets(40, 5) == (8, 16, 24, 32, 40)
+    assert sparse_prefix_offsets(25, 5) == (5, 10, 15, 20, 25)
+    # Rounds up so the last waypoint always lands exactly on the horizon.
+    assert sparse_prefix_offsets(13, 5) == (3, 6, 8, 11, 13)
+    for horizon in (5, 13, 25, 40):
+        offsets = sparse_prefix_offsets(horizon, 5)
+        assert offsets[-1] == horizon
+        assert list(offsets) == sorted(set(offsets))
+    with pytest.raises(ValueError, match='horizon >= action_horizon'):
+        sparse_prefix_offsets(3, 5)
+
+
+def test_multihorizon_actor_offsets_are_drawn_from_the_configured_set():
+    dataset = _make_dataset()
+    config = _make_config('actnce_multihorizon')
+    sampler = LatentBridgerDataset(dataset, config)
+    assert sampler.actor_goal_offsets == (1, 2, 4, 8, 16)
+
+    batch = sampler.sample(4096)
+    offsets = batch['actor_offsets'].astype(np.int64)
+    assert set(np.unique(offsets)) <= {1, 2, 4, 8, 16}
+    # Every horizon must actually appear, or the ablation is not testing one.
+    assert set(np.unique(offsets)) == {1, 2, 4, 8, 16}
+
+    # The goal really is s_{t+delta} of the same episode.
+    anchors = batch['observations']
+    goals = batch['actor_goals']
+    assert np.array_equal(anchors[:, _EPISODE_INDEX], goals[:, _EPISODE_INDEX])
+    assert np.array_equal(
+        goals[:, _GLOBAL_INDEX] - anchors[:, _GLOBAL_INDEX],
+        batch['actor_offsets'],
+    )
+
+
+def test_multihorizon_offsets_never_cross_the_episode_boundary():
+    # Episodes far shorter than the largest offset: the draw must fall back to
+    # the horizons that fit rather than clamping everything onto the terminal.
+    dataset = _make_dataset(episode_lengths=(6, 6, 6, 6))
+    sampler = LatentBridgerDataset(dataset, _make_config('actnce_multihorizon'))
+    batch = sampler.sample(2048)
+    assert set(np.unique(batch['actor_offsets'].astype(np.int64))) <= {1, 2, 4}
+    assert np.array_equal(
+        batch['observations'][:, _EPISODE_INDEX],
+        batch['actor_goals'][:, _EPISODE_INDEX],
+    )
+
+
+def test_local_variant_sampling_is_unchanged_from_v0():
+    """actnce_local must reproduce the released delta=1 actor supervision."""
+
+    dataset = _make_dataset()
+    np.random.seed(7)
+    v0 = LatentBridgerDataset(dataset, _make_config('sa_cl_bc_actnce')).sample(256)
+    np.random.seed(7)
+    v1 = LatentBridgerDataset(dataset, _make_config('actnce_local')).sample(256)
+    for key in v0:
+        assert np.array_equal(v0[key], v1[key]), key
+    assert np.all(v0['actor_offsets'] == 1.0)
+
+
+def test_sparse_bridge_targets_are_long_horizon_waypoints():
+    dataset = _make_dataset(episode_lengths=(200, 200))
+    sampler = LatentBridgerDataset(dataset, _make_config('latent_rf_sparse'))
+    assert sampler.prefix_offsets == (8, 16, 24, 32, 40)
+
+    batch = sampler.sample(512)
+    anchors = batch['observations'][:, _GLOBAL_INDEX]
+    targets = batch['bridge_targets'][:, :, _GLOBAL_INDEX]
+    realized = targets - anchors[:, None]
+    assert np.array_equal(realized, batch['bridge_target_offsets'])
+
+    goal_offsets = batch['bridge_goal_offsets']
+    for index, offset in enumerate(sampler.prefix_offsets):
+        # Each waypoint is its offset, or the goal when the goal comes first.
+        expected = np.minimum(offset, goal_offsets)
+        assert np.array_equal(realized[:, index], expected)
+    # Targets stay inside the anchor's episode.
+    assert np.all(
+        batch['bridge_targets'][:, :, _EPISODE_INDEX]
+        == batch['observations'][:, None, _EPISODE_INDEX]
+    )
+
+
+def test_sparse_bridge_requires_single_step_replanning():
+    dataset = _make_dataset()
+    batch = LatentBridgerDataset(dataset, _make_config('latent_rf_sparse')).sample(8)
+    agent = _make_agent(_make_config('latent_rf_sparse'), batch, stage='flow')
+    assert tuple(agent.config['flow_target_offsets']) == (8, 16, 24, 32, 40)
+    assert int(agent.config['replan_interval']) == 1
+
+    with pytest.raises(ValueError, match="requires replan_interval=1"):
+        _make_agent(
+            _make_config('latent_rf_sparse', replan_interval=5),
+            batch,
+            stage='flow',
+        )
+
+
+def test_lsnr_compares_flow_error_against_true_latent_motion():
+    """LSNR_h must be D_h / E_h on the same rows, excluding clipped waypoints."""
+
+    from utils.latent_diagnostics import flow_reconstruction
+
+    dataset = _make_dataset(episode_lengths=(200, 200))
+    config = _make_config('latent_rf_sparse')
+    sampler = LatentBridgerDataset(dataset, config)
+    agent = _make_agent(config, sampler.sample(8), stage='flow')
+
+    metrics = flow_reconstruction(agent, sampler, batch_size=128, num_batches=2)
+    for offset in (8, 16, 24, 32, 40):
+        assert f'flow/D_h{offset}' in metrics
+        assert f'flow/E_h{offset}' in metrics
+        assert metrics[f'flow/lsnr_h{offset}'] == pytest.approx(
+            metrics[f'flow/D_h{offset}'] / metrics[f'flow/E_h{offset}'],
+            rel=1e-5,
+        )
+        assert 0.0 <= metrics[f'flow/unclipped_fraction_h{offset}'] <= 1.0
+        assert 0.0 <= metrics[f'flow/retrieval_h{offset}'] <= 1.0
+    assert metrics['flow/min_lsnr'] == min(
+        metrics[f'flow/lsnr_h{offset}'] for offset in (8, 16, 24, 32, 40)
+    )
+    # Clipping at the conditioning goal can only bite harder for a farther
+    # waypoint, so the surviving fraction must be non-increasing in h.
+    kept = [metrics[f'flow/unclipped_fraction_h{offset}'] for offset in (8, 16, 24, 32, 40)]
+    assert kept == sorted(kept, reverse=True)
+    assert metrics['flow/target_offset_step_1'] == 8.0
+
+
+def test_actor_goal_sensitivity_detects_a_goal_blind_actor():
+    from utils.latent_diagnostics import actor_goal_sensitivity
+
+    dataset = _make_dataset(episode_lengths=(200, 200))
+    config = _make_config('actnce_multihorizon')
+    sampler = LatentBridgerDataset(dataset, config)
+    agent = _make_agent(config, sampler.sample(8), stage='actor')
+
+    metrics = actor_goal_sensitivity(agent, sampler, batch_size=128)
+    for horizon in (1, 2, 4, 8, 16):
+        assert metrics[f'actor_goal_sensitivity/action_delta_{horizon}'] >= 0.0
+        assert f'actor_goal_sensitivity/critic_gain_{horizon}' in metrics
+
+    class _GoalBlindAgent:
+        """An actor that ignores its conditioning vector entirely."""
+
+        def __init__(self, inner):
+            self._inner = inner
+            self.config = inner.config
+
+        def sample_actions_from_goals(self, observations, goals):
+            del goals
+            return np.zeros((len(observations), _ACTION_DIM), dtype=np.float32)
+
+        def critic_scores(self, *args, **kwargs):
+            return self._inner.critic_scores(*args, **kwargs)
+
+    blind = actor_goal_sensitivity(_GoalBlindAgent(agent), sampler, batch_size=128)
+    for horizon in (1, 2, 4, 8, 16):
+        assert blind[f'actor_goal_sensitivity/action_delta_{horizon}'] == 0.0
+        assert blind[f'actor_goal_sensitivity/critic_gain_{horizon}'] == 0.0
+
+
+def test_hard_action_sensitivity_is_stricter_than_a_single_uniform_action():
+    from utils.latent_diagnostics import action_sensitivity
+
+    dataset = _make_dataset()
+    config = _make_config('actnce_local')
+    sampler = LatentBridgerDataset(dataset, config)
+    agent = _make_agent(config, sampler.sample(8), stage='critic')
+
+    metrics = action_sensitivity(
+        agent,
+        sampler,
+        action_low=-np.ones(_ACTION_DIM, dtype=np.float32),
+        action_high=np.ones(_ACTION_DIM, dtype=np.float32),
+        batch_size=128,
+        num_batches=2,
+        num_hard_candidates=16,
+    )
+    # Beating the best of 16 is never easier than beating one draw.
+    assert metrics['action_sensitivity/p_data_gt_hard'] <= (
+        metrics['action_sensitivity/p_data_gt_uniform'] + 1e-6
+    )
+    assert metrics['action_sensitivity/margin_hard'] <= (
+        metrics['action_sensitivity/margin_uniform'] + 1e-6
     )
 
 

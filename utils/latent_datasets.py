@@ -11,15 +11,18 @@ Three independent goal streams are produced per anchor transition:
     A future state ``s_{t+Delta}`` from the same episode, used as the InfoNCE
     positive for ``C(s, a, g)``.
 ``actor_goals``
-    A *local* future state ``s_{t+delta}`` with ``delta`` in
-    ``[1, actor_goal_max_offset]``; the default offset of one makes the actor
-    target exactly the next observation, which is the quantity the latent
-    rectified-flow bridge will later generate.
+    A future state ``s_{t+delta}``.  With ``actor_goal_offsets`` the offset is
+    drawn from an explicit multi-horizon set such as ``{1, 2, 4, 8, 16}``;
+    otherwise it is uniform in ``[1, actor_goal_max_offset]``, whose default of
+    one makes the actor target exactly the next observation.
 ``bridge_goals`` / ``bridge_targets``
-    An ordinary trajectory-future conditioning goal and the five-step state
-    prefix ``s_{t+1}, ..., s_{t+5}`` used to supervise the latent flow.  The
-    prefix is clipped at the goal and padded with it, matching PathBridger's
-    close-goal behaviour.
+    An ordinary trajectory-future conditioning goal and the state prefix used
+    to supervise the latent flow.  ``flow_target_mode='consecutive'`` takes
+    ``s_{t+1}, ..., s_{t+H_a}``; ``'sparse'`` takes sparse long-horizon
+    waypoints ``s_{t+h_1}, ..., s_{t+h_{H_a}}`` with ``h_k = ceil(k*H/H_a)``.
+    Either prefix is clipped at the goal and padded with it, matching
+    PathBridger's close-goal behaviour.  ``bridge_target_offsets`` reports the
+    realized offsets so diagnostics can exclude clipped rows.
 
 Like the released sampler this module draws from the global NumPy random state
 so checkpoint save/restore reproduces the exact batch stream.
@@ -37,6 +40,30 @@ from utils.datasets import Dataset
 
 _ACTION_HORIZON = 5
 FUTURE_SAMPLING_MODES = ('geometric', 'uniform', 'trajectory')
+FLOW_TARGET_MODES = ('consecutive', 'sparse')
+
+
+def sparse_prefix_offsets(horizon: int, action_horizon: int) -> tuple[int, ...]:
+    """Sparse long-horizon waypoint offsets ``h_k = ceil(k*H/H_a)``.
+
+    With the PathBridger horizon ``H=40`` and ``H_a=5`` this is
+    ``(8, 16, 24, 32, 40)``: five waypoints that span the whole planning
+    horizon instead of five consecutive steps that span almost nothing.
+    """
+
+    horizon = int(horizon)
+    action_horizon = int(action_horizon)
+    if action_horizon < 1:
+        raise ValueError(f'action_horizon must be positive, got {action_horizon}.')
+    if horizon < action_horizon:
+        raise ValueError(
+            'A sparse latent prefix needs horizon >= action_horizon so the '
+            f'waypoints stay distinct; got horizon={horizon}, '
+            f'action_horizon={action_horizon}.'
+        )
+    return tuple(
+        -(-k * horizon // action_horizon) for k in range(1, action_horizon + 1)
+    )
 
 
 def _config_get(config: Any, key: str, default: Any = ...) -> Any:
@@ -71,8 +98,11 @@ class LatentBridgerDatasetConfig:
     discount: float
     future_sampling: str = 'geometric'
     actor_goal_max_offset: int = 1
+    actor_goal_offsets: tuple[int, ...] = ()
     bridge_goal_sampling: str = 'trajectory'
     action_horizon: int = _ACTION_HORIZON
+    flow_target_mode: str = 'consecutive'
+    horizon: int = 40
 
 
 @dataclasses.dataclass
@@ -98,6 +128,15 @@ class LatentBridgerDataset:
         self.action_horizon = int(
             _config_get(self.config, 'action_horizon', _ACTION_HORIZON)
         )
+        self.horizon = int(_config_get(self.config, 'horizon', 40))
+        self.flow_target_mode = str(
+            _config_get(self.config, 'flow_target_mode', 'consecutive')
+        ).lower()
+        if self.flow_target_mode not in FLOW_TARGET_MODES:
+            raise ValueError(
+                f'flow_target_mode must be one of {FLOW_TARGET_MODES}, '
+                f'got {self.flow_target_mode!r}.'
+            )
 
         if not 0.0 < self.discount < 1.0:
             raise ValueError(f'discount must lie in (0, 1), got {self.discount}.')
@@ -110,6 +149,29 @@ class LatentBridgerDataset:
             raise ValueError(
                 f'action_horizon must be at least 1, got {self.action_horizon}.'
             )
+
+        # An explicit offset set supersedes the ``[1, max_offset]`` draw.  The
+        # empty default keeps every released variant's sampling identical.
+        raw_actor_offsets = tuple(
+            int(offset)
+            for offset in _config_get(self.config, 'actor_goal_offsets', ())
+        )
+        if raw_actor_offsets:
+            if any(offset < 1 for offset in raw_actor_offsets):
+                raise ValueError(
+                    f'actor_goal_offsets must all be >= 1, got {raw_actor_offsets}.'
+                )
+            if len(set(raw_actor_offsets)) != len(raw_actor_offsets):
+                raise ValueError(
+                    f'actor_goal_offsets must be unique, got {raw_actor_offsets}.'
+                )
+            self.actor_goal_offsets = tuple(sorted(raw_actor_offsets))
+        else:
+            self.actor_goal_offsets = ()
+        self._actor_offset_table = np.asarray(
+            self.actor_goal_offsets or (1,),
+            dtype=np.int64,
+        )
 
         observations = np.asarray(self.dataset['observations'])
         if observations.ndim != 2:
@@ -150,7 +212,14 @@ class LatentBridgerDataset:
         if not valid_parts:
             raise ValueError('No episode contains a single usable transition.')
         self.valid_starts = np.concatenate(valid_parts)
-        self._prefix_offsets = np.arange(1, self.action_horizon + 1, dtype=np.int64)
+        if self.flow_target_mode == 'sparse':
+            self.prefix_offsets = sparse_prefix_offsets(
+                self.horizon,
+                self.action_horizon,
+            )
+        else:
+            self.prefix_offsets = tuple(range(1, self.action_horizon + 1))
+        self._prefix_offsets = np.asarray(self.prefix_offsets, dtype=np.int64)
 
     @property
     def final_for_idx(self) -> np.ndarray:
@@ -189,6 +258,30 @@ class LatentBridgerDataset:
         return 1 + np.floor(
             np.random.random(len(max_offsets)) * max_offsets
         ).astype(np.int64)
+
+    def _sample_actor_offsets(self, remaining: np.ndarray) -> np.ndarray:
+        """Draw one actor-goal offset per row.
+
+        With an explicit ``actor_goal_offsets`` set each row draws uniformly
+        from the offsets that still fit inside its episode, so a short suffix
+        falls back to the nearer horizons instead of being clipped onto the
+        terminal state (which would silently over-sample the episode end).
+        """
+
+        if not self.actor_goal_offsets:
+            return self._uniform_positive_offsets(
+                np.minimum(self.actor_goal_max_offset, remaining)
+            )
+        # The table is sorted, so the feasible prefix length is a searchsorted.
+        feasible = np.maximum(
+            np.searchsorted(self._actor_offset_table, remaining, side='right'),
+            1,
+        )
+        picks = np.floor(np.random.random(len(remaining)) * feasible).astype(np.int64)
+        offsets = self._actor_offset_table[picks]
+        # Only bites when even the smallest configured offset overshoots the
+        # episode end, which cannot happen for a table that starts at 1.
+        return np.minimum(offsets, remaining)
 
     def _sample_future_idxs(
         self,
@@ -239,8 +332,7 @@ class LatentBridgerDataset:
         contrastive_idxs = self._sample_future_idxs(idxs, finals, self.future_sampling)
         contrastive_offsets = contrastive_idxs - idxs
 
-        actor_max_offsets = np.minimum(self.actor_goal_max_offset, remaining)
-        actor_offsets = self._uniform_positive_offsets(actor_max_offsets)
+        actor_offsets = self._sample_actor_offsets(remaining)
         actor_idxs = idxs + actor_offsets
 
         bridge_goal_idxs = self._sample_future_idxs(
@@ -255,6 +347,7 @@ class LatentBridgerDataset:
             idxs[:, None] + self._prefix_offsets[None, :],
             bridge_goal_idxs[:, None],
         )
+        bridge_target_offsets = bridge_target_idxs - idxs[:, None]
 
         return {
             'observations': np.asarray(observations[idxs], dtype=np.float32),
@@ -279,6 +372,7 @@ class LatentBridgerDataset:
                 observations[bridge_target_idxs],
                 dtype=np.float32,
             ),
+            'bridge_target_offsets': bridge_target_offsets.astype(np.float32),
         }
 
     def sample_offset_pairs(
@@ -321,7 +415,9 @@ class LatentBridgerDataset:
 
 
 __all__ = [
+    'FLOW_TARGET_MODES',
     'FUTURE_SAMPLING_MODES',
     'LatentBridgerDataset',
     'LatentBridgerDatasetConfig',
+    'sparse_prefix_offsets',
 ]

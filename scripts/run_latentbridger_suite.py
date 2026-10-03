@@ -97,25 +97,35 @@ def actor_signature(variant: str) -> str:
     """Identify variants whose actor stage is the same computation.
 
     ``latent_rf`` is ``sa_cl_bc`` plus Module B, and ``latent_rf_actnce`` is
-    ``sa_cl_bc_actnce`` plus Module B.  In both pairs the actor stage is the
-    same objective trained against the same frozen critic, so the flow must be
-    built on the *same* controller rather than on a separately trained copy.
+    ``sa_cl_bc_actnce`` plus Module B, and ``latent_rf_sparse`` is
+    ``actnce_multihorizon`` plus Module B.  In every pair the actor stage is
+    the same objective trained against the same frozen critic, so the flow
+    must be built on the *same* controller rather than on a separately
+    trained copy.
     """
 
     settings = VARIANT_SETTINGS[variant]
     critic = critic_signature(variant) or 'nocritic'
+    offsets = '-'.join(str(int(offset)) for offset in settings['actor_goal_offsets'])
     return (
         f'actor_{critic}_{settings["actor_goal_input"]}'
         f'_{settings["actor_objective"]}_bc{settings["actor_bc_coef"]:g}'
+        f'_h{offsets}'
     )
 
 
 def eval_jobs(variant: str, replan_intervals: tuple[int, ...]) -> tuple[tuple[str, int | None], ...]:
     """(mode, replan_interval) pairs to evaluate, as (name, interval)."""
 
+    settings = VARIANT_SETTINGS[variant]
     jobs: list[tuple[str, int | None]] = [('direct_goal', None)]
-    if VARIANT_SETTINGS[variant]['use_flow']:
-        jobs.extend(('latent_flow', interval) for interval in replan_intervals)
+    if settings['use_flow']:
+        # A sparse bridge is only defined at replan_interval=1, so it ignores
+        # the sweep's interval list rather than failing partway through.
+        intervals = (
+            (1,) if settings['flow_target_mode'] == 'sparse' else replan_intervals
+        )
+        jobs.extend(('latent_flow', interval) for interval in intervals)
     return tuple(jobs)
 
 
@@ -345,7 +355,15 @@ def main() -> int:
                 'critic_signature': signature,
                 'actor_signature': signatures['actor'],
                 'stage_checkpoints': stage_sources,
-                'replan_intervals': list(replan_intervals),
+                'replan_intervals': [
+                    interval
+                    for mode, interval in eval_jobs(variant, replan_intervals)
+                    if mode == 'latent_flow'
+                ],
+                'actor_goal_offsets': list(
+                    VARIANT_SETTINGS[variant]['actor_goal_offsets']
+                ),
+                'flow_target_mode': VARIANT_SETTINGS[variant]['flow_target_mode'],
             }
             completed.append(record)
             if not args.dry_run:

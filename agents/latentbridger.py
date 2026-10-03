@@ -41,6 +41,7 @@ import optax
 
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field, resolve_checkpoint
 from utils.goal_representation import goal_representation
+from utils.latent_datasets import FLOW_TARGET_MODES, sparse_prefix_offsets
 from utils.networks import MLP
 
 _MODULE_NAMES = ('phi_sa', 'phi_s', 'psi', 'actor', 'flow')
@@ -54,11 +55,20 @@ VARIANTS = (
     'sa_cl_bc_actnce',
     'latent_rf',
     'latent_rf_actnce',
+    # v1: latent temporal-scale mismatch.
+    'actnce_local',
+    'actnce_multihorizon',
+    'latent_rf_sparse',
 )
 CRITIC_TYPES = ('none', 'state', 'sa')
 ACTOR_GOAL_INPUTS = ('raw', 'latent')
 ACTOR_OBJECTIVES = ('bc', 'contrastive')
 EVAL_MODES = ('direct_goal', 'latent_flow')
+
+# v1 defaults.  The v0 pilot showed the consecutive five-step latent prefix
+# spans less cosine distance than the flow's own reconstruction error, so the
+# multi-horizon actor and the sparse bridge exist to widen that target.
+V1_ACTOR_GOAL_OFFSETS = (1, 2, 4, 8, 16)
 
 # Structural choices implied by each named variant.  They are written into the
 # config so a run is fully reproducible from its serialized flags alone.
@@ -128,7 +138,56 @@ VARIANT_SETTINGS: dict[str, dict[str, Any]] = {
         use_flow=True,
         eval_mode='latent_flow',
     ),
+    # ------------------------------------------------------------------
+    # v1: does the latent bridge fail because its target is too fine-grained?
+    # All three keep the v1 default critic (SA-InfoNCE + action-NCE) and BC.
+    # ------------------------------------------------------------------
+    'actnce_local': dict(
+        critic_type='sa',
+        actor_goal_input='latent',
+        actor_objective='contrastive',
+        actor_bc_coef=10.0,
+        action_nce_coef=1.0,
+        actor_goal_offsets=(1,),
+        use_flow=False,
+        eval_mode='direct_goal',
+    ),
+    'actnce_multihorizon': dict(
+        critic_type='sa',
+        actor_goal_input='latent',
+        actor_objective='contrastive',
+        actor_bc_coef=10.0,
+        action_nce_coef=1.0,
+        actor_goal_offsets=V1_ACTOR_GOAL_OFFSETS,
+        use_flow=False,
+        eval_mode='direct_goal',
+    ),
+    'latent_rf_sparse': dict(
+        critic_type='sa',
+        actor_goal_input='latent',
+        actor_objective='contrastive',
+        actor_bc_coef=10.0,
+        action_nce_coef=1.0,
+        actor_goal_offsets=V1_ACTOR_GOAL_OFFSETS,
+        use_flow=True,
+        flow_target_mode='sparse',
+        eval_mode='latent_flow',
+    ),
 }
+
+# Every released v0 variant predates these knobs; filling them in here keeps
+# their sampling byte-identical while letting the variant table own them.
+for _settings in VARIANT_SETTINGS.values():
+    _settings.setdefault('actor_goal_offsets', (1,))
+    _settings.setdefault('flow_target_mode', 'consecutive')
+    # A sparse bridge must be replanned every step: its k-th waypoint is h_k
+    # steps ahead, not k steps ahead, so executing the prefix as a chunk would
+    # hand the actor a target it is nowhere near reaching.
+    _settings.setdefault(
+        'replan_interval',
+        1 if _settings['flow_target_mode'] == 'sparse' else 5,
+    )
+del _settings
 
 _STAGE_TRAINABLE: dict[str, tuple[str, ...]] = {
     'critic': ('phi_sa', 'phi_s', 'psi'),
@@ -291,6 +350,14 @@ def _as_float_tuple(value: Any, *, size: int, name: str) -> tuple[float, ...]:
     if not np.all(np.isfinite(array)):
         raise ValueError(f'{name} must be finite, got {value!r}.')
     return tuple(float(entry) for entry in array)
+
+
+def _as_comparable(value: Any) -> Any:
+    """Normalize a setting so a ConfigDict list compares equal to a tuple."""
+
+    if isinstance(value, (list, tuple)):
+        return tuple(_as_comparable(entry) for entry in value)
+    return value
 
 
 def _freeze_config(config: dict[str, Any]) -> Any:
@@ -932,15 +999,25 @@ class LatentBridgerAgent(flax.struct.PyTreeNode):
         # The variant owns the structural choices; a config may not silently
         # disagree with them.  Coefficients stay freely editable.
         settings = VARIANT_SETTINGS[variant]
-        for key in ('critic_type', 'actor_goal_input', 'actor_objective', 'use_flow'):
+        for key in (
+            'critic_type',
+            'actor_goal_input',
+            'actor_objective',
+            'use_flow',
+            'actor_goal_offsets',
+            'flow_target_mode',
+        ):
             expected = settings[key]
-            if key in config and config[key] != expected:
+            if key in config and _as_comparable(config[key]) != _as_comparable(expected):
                 raise ValueError(
                     f'variant={variant!r} fixes {key}={expected!r}, but the '
                     f'config requests {config[key]!r}. Choose a different '
                     'variant instead of overriding its structure.'
                 )
             config[key] = expected
+        config['actor_goal_offsets'] = tuple(
+            int(offset) for offset in config['actor_goal_offsets']
+        )
         for key in ('actor_bc_coef', 'action_nce_coef', 'eval_mode'):
             config.setdefault(key, settings[key])
         if str(config['critic_type']) not in CRITIC_TYPES:
@@ -962,6 +1039,11 @@ class LatentBridgerAgent(flax.struct.PyTreeNode):
             raise ValueError(
                 f'eval_mode must be one of {EVAL_MODES}, '
                 f'got {config["eval_mode"]!r}.'
+            )
+        if str(config['flow_target_mode']) not in FLOW_TARGET_MODES:
+            raise ValueError(
+                f'flow_target_mode must be one of {FLOW_TARGET_MODES}, '
+                f'got {config["flow_target_mode"]!r}.'
             )
         if stage == 'critic' and str(config['critic_type']) == 'none':
             raise ValueError(
@@ -1000,11 +1082,28 @@ class LatentBridgerAgent(flax.struct.PyTreeNode):
             raise ValueError('flow_steps must be at least 1.')
         if float(config['flow_noise_scale']) < 0.0:
             raise ValueError('flow_noise_scale must be non-negative.')
+        # Resolve the bridge's target offsets once, so the evaluator and the
+        # diagnostics read the same waypoint schedule the sampler supervises.
+        if str(config['flow_target_mode']) == 'sparse':
+            config['flow_target_offsets'] = sparse_prefix_offsets(
+                int(config['horizon']),
+                action_horizon,
+            )
+        else:
+            config['flow_target_offsets'] = tuple(range(1, action_horizon + 1))
         replan_interval = int(config.setdefault('replan_interval', action_horizon))
         if not 1 <= replan_interval <= action_horizon:
             raise ValueError(
                 'replan_interval must lie in [1, action_horizon] = '
                 f'[1, {action_horizon}], got {replan_interval}.'
+            )
+        if str(config['flow_target_mode']) == 'sparse' and replan_interval != 1:
+            raise ValueError(
+                "flow_target_mode='sparse' requires replan_interval=1: waypoint "
+                f'k targets {config["flow_target_offsets"]}[k] steps ahead, not '
+                f'k steps ahead, so a chunk of {replan_interval} would feed the '
+                'actor goals it cannot reach. Got '
+                f'replan_interval={replan_interval}.'
             )
         if int(config['num_action_negatives']) < 1:
             raise ValueError('num_action_negatives must be at least 1.')
@@ -1243,7 +1342,9 @@ def get_config() -> ml_collections.ConfigDict:
             future_sampling='geometric',
             bridge_goal_sampling='trajectory',
             actor_goal_max_offset=1,
+            actor_goal_offsets=(1,),
             action_horizon=5,
+            flow_target_mode='consecutive',
             # Objectives.
             critic_type='sa',
             actor_goal_input='latent',
@@ -1277,6 +1378,7 @@ __all__ = [
     'STAGES',
     'StateActionEncoder',
     'StateEncoder',
+    'V1_ACTOR_GOAL_OFFSETS',
     'VARIANTS',
     'VARIANT_SETTINGS',
     'get_config',

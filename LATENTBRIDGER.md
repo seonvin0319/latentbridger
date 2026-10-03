@@ -78,9 +78,13 @@ fixed. Gradient therefore flows `L_actor -> C -> a_hat -> pi`, which is the
 entire point of the objective. Wrapping `C` in `stop_gradient` instead would
 silently reduce the actor to pure BC.
 
-`g_actor` defaults to `s_{t+1}` (`actor_goal_max_offset=1`), matching what
-Module B emits: a local next latent target. `actor_goal_max_offset=5` is the
-ablation that lets `g_actor` be any state within five transitions.
+`g_actor` defaults to `s_{t+1}` (`actor_goal_offsets=(1,)`), matching what the
+v0 Module B emits: a local next latent target. Two ablations widen it.
+`actor_goal_offsets=(1,2,4,8,16)` draws one horizon per batch element from an
+explicit multi-horizon set, which is what the v1 variants use so the actor can
+accept the long-horizon waypoints a sparse bridge produces. Leaving
+`actor_goal_offsets` empty falls back to a uniform draw in
+`[1, actor_goal_max_offset]`, the released v0 behaviour.
 
 ### Action-contrastive auxiliary loss
 
@@ -253,6 +257,70 @@ after an update, and the smoke run confirms it on real checkpoints.
 | `latent_rf` | `phi_sa(s,a)^T psi(g)` | generated `z_i` | contrastive | 10.0 | 0.0 | **yes** | does latent RF bridging add anything? |
 | `latent_rf_actnce` | `phi_sa(s,a)^T psi(g)` | generated `z_i` | contrastive | 10.0 | 1.0 | **yes** | does Module B need an action-sensitive critic underneath? |
 
+### v1 variants: the latent temporal-scale hypothesis
+
+The v0 pilot returned a null result with a specific mechanism behind it. The
+flow reconstructed its target almost perfectly (prefix cosine 0.983, endpoint
+retrieval 95%), but the target barely moved: consecutive latents sit at cosine
+0.998, so the whole five-step prefix spanned about 0.015 of cosine distance
+while the flow's own error was 0.006 at one step. The error exceeded the signal
+at every horizon inside the prefix, so the generated waypoint was further from
+the true future than standing still.
+
+The v1 hypothesis is that this is a *scale* problem, not a flow problem: the
+bridge was asked to predict `psi(s_{t+1:t+5})`, which is nearly a no-op. v1
+keeps explicit state-space subgoals out of the design and instead widens the
+latent target to sparse long-horizon waypoints.
+
+| variant | actor goal offsets | flow target | replan | question |
+| --- | --- | --- | --- | --- |
+| `actnce_local` | `{1}` | — | — | the v0 action-NCE controller, unchanged |
+| `actnce_multihorizon` | `{1,2,4,8,16}` | — | — | does a multi-horizon actor become steerable? |
+| `latent_rf_sparse` | `{1,2,4,8,16}` | `psi(s_{t+h_k})`, `h_k = ceil(k*H/5)` | 1 | does a sparse bridge produce usable control signal? |
+
+All three use the v1 default critic: SA-InfoNCE **plus** action-NCE, with BC
+regularization retained. `actnce_local` is numerically identical to
+`sa_cl_bc_actnce`, which a test asserts, so the two pilots stay comparable.
+
+For the PathBridger horizon `H=40` the sparse offsets are `{8,16,24,32,40}`;
+`cube_single` and `cube_double` both derive them from their own configured
+`horizon`, so no offset list is hardcoded per environment.
+
+A sparse bridge is only meaningful at `replan_interval=1`: its k-th waypoint is
+`h_k` steps ahead, not `k` steps ahead, so executing the prefix as a chunk
+would hand the actor goals it is nowhere near reaching. The agent rejects any
+other value, and the suite runner evaluates sparse variants at interval 1
+regardless of `--replan_intervals`.
+
+### Latent signal-to-noise ratio
+
+The v1 gate is a single ratio, reported per waypoint by the flow diagnostic:
+
+```
+D_h    = 1 - cos(psi(s_t),  psi(s_{t+h}))    how far the latent really moves
+E_h    = 1 - cos(zhat_h,    psi(s_{t+h}))    how wrong the generated waypoint is
+LSNR_h = D_h / E_h
+```
+
+`LSNR_h > 1` means the generated waypoint is closer to the true future than
+the current latent is, i.e. it carries control signal the actor could not get
+for free. Below 1 the actor is better off being handed `psi(s_t)` and the
+bridge cannot help, whatever the success rate says. v0 ran at roughly 0.3 at
+one step. Rows whose waypoint was clipped at the conditioning goal are
+excluded from the per-horizon statistics, and the surviving fraction is
+reported as `flow/unclipped_fraction_h{h}`.
+
+Two further v1 diagnostics guard the other ways this can fail quietly:
+
+- `actor_goal_sensitivity/*` compares `pi(s, psi(s))` against
+  `pi(s, psi(s_{t+h}))` for `h` in `{1,2,4,8,16}`, reporting both the action
+  displacement and the critic's preference for the horizon-conditioned action.
+  A goal-blind actor scores zero on both and can never be steered by any
+  waypoint.
+- `action_sensitivity/p_data_gt_hard` compares the data action against the
+  *best* of 16 uniform actions rather than one. Beating a single random draw
+  turned out to be far too easy to be informative.
+
 The table is built so each neighbouring comparison moves one knob.
 `sa_cl` and `sa_cl_bc` differ only in `actor_bc_coef`; `sa_cl_bc` and
 `sa_cl_bc_actnce` differ only in `action_nce_coef`; `latent_rf` differs from
@@ -279,7 +347,7 @@ Rather than train nominally-identical stages that drift apart, the runner keys
 each stage by a signature and trains it once:
 
 - critic signature: `(critic_type, action_nce_coef)`
-- actor signature: `(critic signature, actor_goal_input, actor_objective, actor_bc_coef)`
+- actor signature: `(critic signature, actor_goal_input, actor_objective, actor_bc_coef, actor_goal_offsets)`
 
 Shared checkpoints land in `_shared/<signature>/seed<N>/`. `latent_rf`
 therefore provably reuses the exact Module-A representation **and controller**
@@ -460,8 +528,10 @@ logsumexp_coef          = 0.0      # SGCRL-style penalty for repr_norm=False
 
 future_sampling         = 'geometric'
 bridge_goal_sampling    = 'trajectory'
-actor_goal_max_offset   = 1
+actor_goal_max_offset   = 1              # used only when actor_goal_offsets is ()
+actor_goal_offsets      = (1,)           # explicit set; supersedes the above
 action_horizon          = 5
+flow_target_mode        = 'consecutive'  # or 'sparse'
 
 actor_bc_coef           = 10.0
 action_nce_coef         = 0.0

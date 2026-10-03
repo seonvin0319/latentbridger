@@ -27,10 +27,51 @@ _DIAGNOSTIC_COLUMNS: tuple[tuple[str, str], ...] = (
     ('recall@5', 'diagnostics/retrieval/recall_at_5'),
     ('act_sens_shuf', 'diagnostics/action_sensitivity/p_data_gt_shuffled'),
     ('act_sens_unif', 'diagnostics/action_sensitivity/p_data_gt_uniform'),
+    ('act_sens_hard', 'diagnostics/action_sensitivity/p_data_gt_hard'),
     ('actor_bc_mse', 'diagnostics/actor/bc_mse'),
     ('flow_prefix_mse', 'diagnostics/flow/prefix_latent_mse'),
+    ('flow_min_lsnr', 'diagnostics/flow/min_lsnr'),
+)
+
+# Per-horizon families, whose horizons depend on the variant's offsets and so
+# cannot be listed ahead of time.  Label prefix -> diagnostics key prefix.
+_DIAGNOSTIC_FAMILIES: tuple[tuple[str, str], ...] = (
+    ('goalsens_a', 'diagnostics/actor_goal_sensitivity/action_delta_'),
+    ('D_h', 'diagnostics/flow/D_h'),
+    ('E_h', 'diagnostics/flow/E_h'),
+    ('lsnr_h', 'diagnostics/flow/lsnr_h'),
 )
 _DIRECT_GOAL_FILE = 'eval_direct_goal.json'
+
+
+def _family_columns(diagnostics: dict[str, Any]) -> list[tuple[str, str]]:
+    """Expand the per-horizon diagnostic families present in one payload."""
+
+    columns: list[tuple[str, str]] = []
+    for label_prefix, key_prefix in _DIAGNOSTIC_FAMILIES:
+        for key in diagnostics:
+            if not key.startswith(key_prefix):
+                continue
+            suffix = key[len(key_prefix):]
+            if not suffix.isdigit():
+                continue
+            columns.append((f'{label_prefix}{suffix}', key))
+    return columns
+
+
+def _sorted_family_columns(columns: set[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Order family columns by family first, then numerically by horizon."""
+
+    order = {prefix: index for index, (prefix, _) in enumerate(_DIAGNOSTIC_FAMILIES)}
+
+    def sort_key(column: tuple[str, str]) -> tuple[int, int]:
+        label, _ = column
+        for prefix, index in order.items():
+            if label.startswith(prefix):
+                return index, int(label[len(prefix):])
+        return len(order), 0
+
+    return sorted(columns, key=sort_key)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -84,7 +125,7 @@ def _success_column(path: Path, payload: dict[str, Any]) -> str:
     return f'latent_flow_r{int(interval)}'
 
 
-def collect(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
+def collect(root: Path) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     """Group every per-seed result directory by (environment, variant)."""
 
     grouped: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
@@ -92,6 +133,7 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
     )
     seeds: dict[tuple[str, str], set[int]] = defaultdict(set)
     success_columns: set[str] = set()
+    family_columns: set[tuple[str, str]] = set()
 
     for results_dir in sorted(root.rglob('results')):
         if not results_dir.is_dir():
@@ -121,11 +163,14 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
             grouped[key][column].append(float(value))
 
         if diagnostics is not None:
-            for column, json_key in _DIAGNOSTIC_COLUMNS:
+            present = _family_columns(diagnostics)
+            family_columns.update(present)
+            for column, json_key in (*_DIAGNOSTIC_COLUMNS, *present):
                 if json_key in diagnostics:
                     grouped[key][column].append(float(diagnostics[json_key]))
 
     ordered_success = ['direct_goal'] + sorted(success_columns - {'direct_goal'})
+    ordered_families = _sorted_family_columns(family_columns)
     rows: list[dict[str, Any]] = []
     for (env_name, variant), metrics in sorted(grouped.items()):
         row: dict[str, Any] = {
@@ -137,12 +182,12 @@ def collect(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
             mean, std = _mean_std(metrics.get(column, []))
             row[f'{column}_success_mean'] = mean
             row[f'{column}_success_std'] = std
-        for column, _ in _DIAGNOSTIC_COLUMNS:
+        for column, _ in (*_DIAGNOSTIC_COLUMNS, *ordered_families):
             mean, std = _mean_std(metrics.get(column, []))
             row[f'{column}_mean'] = mean
             row[f'{column}_std'] = std
         rows.append(row)
-    return rows, ordered_success
+    return rows, ordered_success, [label for label, _ in ordered_families]
 
 
 def _format(value: Any, precision: int) -> str:
@@ -153,7 +198,7 @@ def _format(value: Any, precision: int) -> str:
     return str(value)
 
 
-def _headers(success_columns: list[str]) -> list[str]:
+def _headers(success_columns: list[str], family_columns: list[str]) -> list[str]:
     return [
         'env_name',
         'variant',
@@ -164,15 +209,17 @@ def _headers(success_columns: list[str]) -> list[str]:
             for statistic in ('mean', 'std')
         ],
         *[f'{column}_mean' for column, _ in _DIAGNOSTIC_COLUMNS],
+        *[f'{column}_mean' for column in family_columns],
     ]
 
 
 def _render_table(
     rows: list[dict[str, Any]],
     success_columns: list[str],
+    family_columns: list[str],
     precision: int,
 ) -> list[str]:
-    headers = _headers(success_columns)
+    headers = _headers(success_columns, family_columns)
     table = [headers]
     table.extend(
         [_format(row.get(header), precision) for header in headers] for row in rows
@@ -187,6 +234,7 @@ def _render_table(
 def write_outputs(
     rows: list[dict[str, Any]],
     success_columns: list[str],
+    family_columns: list[str],
     output_dir: Path,
     precision: int,
 ) -> None:
@@ -200,7 +248,7 @@ def write_outputs(
         for row in rows:
             writer.writerow(row)
 
-    headers = _headers(success_columns)
+    headers = _headers(success_columns, family_columns)
     lines = [
         '# LatentBridger summary',
         '',
@@ -222,12 +270,18 @@ def main() -> int:
     if not root.is_dir():
         raise SystemExit(f'Experiment root not found: {root}')
 
-    rows, success_columns = collect(root)
+    rows, success_columns, family_columns = collect(root)
     if not rows:
         raise SystemExit(f'No LatentBridger result files found under {root}.')
 
-    print('\n'.join(_render_table(rows, success_columns, args.precision)))
-    write_outputs(rows, success_columns, Path(args.output_dir or root), args.precision)
+    print('\n'.join(_render_table(rows, success_columns, family_columns, args.precision)))
+    write_outputs(
+        rows,
+        success_columns,
+        family_columns,
+        Path(args.output_dir or root),
+        args.precision,
+    )
     return 0
 
 
