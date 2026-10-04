@@ -314,7 +314,10 @@ def main(_):
     for signal_number in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signal_number, _request_stop)
 
-    training_env_steps = 0
+    # Restored update counts already cover the steps before this process.
+    # Counting only the new steps would make the logged ratio look like the
+    # continuation took far more updates than the runs it is compared with.
+    training_env_steps = int(counters['update_count'] / updates_per_env_step)
     recent_success: list[float] = []
     recent_distance: list[float] = []
     pending_updates = 0.0
