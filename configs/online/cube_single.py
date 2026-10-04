@@ -6,7 +6,7 @@ def get_config(variant=DEFAULT_VARIANT):
         env_name='cube-single-play-v0',
         task_id=1,
         variant=variant,
-        # cube-single episodes are 200 steps, so a 40-step bridge horizon
-        # spans a fifth of an episode, matching the offline sparse scheme.
-        bridge_horizon=40,
+        # alpha=0.5 puts the waypoint target at the segment midpoint.  It is
+        # held fixed across the three-way comparison and only swept later.
+        bridge_alpha=0.5,
     )

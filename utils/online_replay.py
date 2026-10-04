@@ -24,21 +24,25 @@ import numpy as np
 
 __all__ = [
     'EpisodicReplayBuffer',
-    'sparse_bridge_offsets',
+    'waypoint_index',
 ]
 
 
-def sparse_bridge_offsets(horizon: int, num_waypoints: int) -> tuple[int, ...]:
-    """Evenly spaced waypoint offsets whose last one lands on ``horizon``."""
+def waypoint_index(segment_length: np.ndarray, alpha: float) -> np.ndarray:
+    """Offset of the intermediate waypoint inside a segment of length ``Delta``.
 
-    if horizon < num_waypoints:
-        raise ValueError(
-            f'sparse offsets need horizon >= num_waypoints, got {horizon} < '
-            f'{num_waypoints}.'
-        )
-    return tuple(
-        -(-step * horizon // num_waypoints) for step in range(1, num_waypoints + 1)
-    )
+    The waypoint sits at ``floor(alpha * Delta)`` steps past the anchor, and is
+    clipped into ``[1, Delta - 1]`` so that ``t < i < j`` holds strictly.  The
+    clip only bites for short segments: with ``Delta = 2`` and ``alpha = 0.1``
+    the unclipped index would coincide with the anchor, which is not a
+    waypoint at all.
+    """
+
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f'alpha must lie strictly in (0, 1), got {alpha}.')
+    segment_length = np.asarray(segment_length, dtype=np.int64)
+    raw = np.floor(alpha * segment_length).astype(np.int64)
+    return np.clip(raw, 1, segment_length - 1)
 
 
 class EpisodicReplayBuffer:
@@ -56,6 +60,7 @@ class EpisodicReplayBuffer:
         discount: float,
         max_size: int = 1_000_000,
         seed: int = 0,
+        holdout_every: int = 20,
     ):
         if not 0.0 < discount < 1.0:
             raise ValueError(f'discount must lie in (0, 1), got {discount}.')
@@ -63,11 +68,20 @@ class EpisodicReplayBuffer:
         self.action_dim = int(action_dim)
         self.discount = float(discount)
         self.max_size = int(max_size)
+        if int(holdout_every) < 2:
+            raise ValueError(f'holdout_every must be >= 2, got {holdout_every}.')
+        self.holdout_every = int(holdout_every)
         self._rng = np.random.default_rng(seed)
         # Each episode is (observations[T+1, obs], actions[T, act]); the extra
         # observation is the final state, which is a valid goal but has no
         # action and so is never an anchor.
         self._episodes: list[tuple[np.ndarray, np.ndarray]] = []
+        # Insertion ordinal per stored episode.  Every `holdout_every`-th one
+        # is withheld from *bridge* training so the bridge can be scored on
+        # trajectories it never fit.  The critic and actor still see all of
+        # them, which keeps their data distribution exactly SGCRL's.
+        self._episode_ids: list[int] = []
+        self._episodes_inserted = 0
         self._num_transitions = 0
         self._total_inserted = 0
 
@@ -87,10 +101,13 @@ class EpisodicReplayBuffer:
             # anchor, so it can never produce a training row.
             return
         self._episodes.append((observations, actions))
+        self._episode_ids.append(self._episodes_inserted)
+        self._episodes_inserted += 1
         self._num_transitions += actions.shape[0]
         self._total_inserted += actions.shape[0]
         while self._num_transitions > self.max_size and len(self._episodes) > 1:
             dropped_observations, dropped_actions = self._episodes.pop(0)
+            self._episode_ids.pop(0)
             del dropped_observations
             self._num_transitions -= dropped_actions.shape[0]
 
@@ -111,12 +128,32 @@ class EpisodicReplayBuffer:
     def ready(self, min_size: int) -> bool:
         return self._num_transitions >= int(min_size)
 
-    def _sample_anchor_rows(self, batch_size: int):
+    def _episode_pool(self, holdout: bool | None) -> np.ndarray:
+        """Indices of the episodes a given consumer is allowed to sample.
+
+        ``None`` means every episode, which is what the critic and actor use.
+        """
+
+        if holdout is None:
+            return np.arange(len(self._episodes), dtype=np.int64)
+        ids = np.asarray(self._episode_ids, dtype=np.int64)
+        is_holdout = (ids % self.holdout_every) == 0
+        pool = np.flatnonzero(is_holdout if holdout else ~is_holdout)
+        if pool.size == 0:
+            raise RuntimeError(
+                'No '
+                + ('held-out' if holdout else 'training')
+                + ' episodes are available yet.'
+            )
+        return pool.astype(np.int64)
+
+    def _sample_anchor_rows(self, batch_size: int, holdout: bool | None = None):
         """Pick one anchor timestep from each of ``batch_size`` episodes."""
 
         if not self._episodes:
             raise RuntimeError('Cannot sample from an empty replay buffer.')
-        episode_indices = self._rng.integers(0, len(self._episodes), size=batch_size)
+        pool = self._episode_pool(holdout)
+        episode_indices = pool[self._rng.integers(0, pool.size, size=batch_size)]
         lengths = np.array(
             [self._episodes[index][1].shape[0] for index in episode_indices],
             dtype=np.int64,
@@ -126,7 +163,9 @@ class EpisodicReplayBuffer:
         anchors = (self._rng.random(batch_size) * (lengths - 1)).astype(np.int64)
         return episode_indices, anchors, lengths
 
-    def _sample_future_offsets(self, anchors: np.ndarray, lengths: np.ndarray):
+    def _sample_future_offsets(
+        self, anchors: np.ndarray, lengths: np.ndarray, min_offset: int = 1
+    ):
         """Draw ``Delta ~ Geometric(1 - discount)`` truncated at the episode end.
 
         The original samples a categorical over ``discount ** (j - t)`` for
@@ -142,13 +181,16 @@ class EpisodicReplayBuffer:
         remaining = lengths - anchors
         uniform = self._rng.random(len(anchors))
         if self.discount >= 1.0:
-            return np.maximum(1, np.ceil(uniform * remaining)).astype(np.int64)
-        # Truncated geometric CDF: F(d) = (1 - q^d) / (1 - q^remaining).
-        log_q = np.log(self.discount)
-        tail = np.exp(log_q * remaining)
-        scaled = 1.0 - uniform * (1.0 - tail)
-        offsets = np.ceil(np.log(scaled) / log_q)
-        return np.clip(offsets, 1, remaining).astype(np.int64)
+            offsets = np.ceil(uniform * remaining)
+        else:
+            # Truncated geometric CDF: F(d) = (1 - q^d) / (1 - q^remaining).
+            log_q = np.log(self.discount)
+            tail = np.exp(log_q * remaining)
+            scaled = 1.0 - uniform * (1.0 - tail)
+            offsets = np.ceil(np.log(scaled) / log_q)
+        # `min_offset` is 2 for bridge segments, which need room for a state
+        # strictly between the anchor and the endpoint.
+        return np.clip(offsets, min_offset, remaining).astype(np.int64)
 
     def sample(self, batch_size: int) -> dict[str, np.ndarray]:
         """A critic/actor training batch with hindsight future goals."""
@@ -179,46 +221,42 @@ class EpisodicReplayBuffer:
     def sample_bridge(
         self,
         batch_size: int,
-        offsets: tuple[int, ...],
+        alpha: float = 0.5,
+        holdout: bool = False,
     ) -> dict[str, np.ndarray]:
-        """A batch of sparse waypoint targets for the latent bridge.
+        """Supervision tuples ``(s_t, g = s_j) -> w* = s_i`` for the bridge.
 
-        Returns the anchor, the episode's final-reachable goal, and the states
-        at each sparse offset, clipped to the episode end.  The targets are
-        *states*; the caller encodes them with the current ``psi``, because
-        online training moves the representation under the bridge and a cached
-        latent target would be stale within a few thousand updates.
+        The waypoint target is a state the trajectory actually visited, not an
+        interpolation between the anchor and the goal.  Segments use the same
+        within-episode truncated-geometric endpoint distribution as the
+        critic's hindsight goals, so the bridge and the critic are fit on the
+        same notion of "reachable future" rather than two different ones.
+
+        ``Delta >= 2`` is enforced so that ``t < i < j`` holds strictly.
         """
 
-        if not offsets:
-            raise ValueError('sample_bridge needs at least one offset.')
-        episode_indices, anchors, lengths = self._sample_anchor_rows(batch_size)
-        horizon = max(offsets)
+        episode_indices, anchors, lengths = self._sample_anchor_rows(
+            batch_size, holdout=holdout
+        )
+        segment_lengths = self._sample_future_offsets(anchors, lengths, min_offset=2)
+        waypoint_offsets = waypoint_index(segment_lengths, alpha)
 
         observations = np.empty((batch_size, self.observation_dim), dtype=np.float32)
         goals = np.empty_like(observations)
-        targets = np.empty(
-            (batch_size, len(offsets), self.observation_dim), dtype=np.float32
-        )
-        valid = np.empty((batch_size, len(offsets)), dtype=np.float32)
-        for row, (episode_index, anchor, length) in enumerate(
-            zip(episode_indices, anchors, lengths)
+        waypoints = np.empty_like(observations)
+        for row, (episode_index, anchor, segment, offset) in enumerate(
+            zip(episode_indices, anchors, segment_lengths, waypoint_offsets)
         ):
             episode_observations, _ = self._episodes[episode_index]
             observations[row] = episode_observations[anchor]
-            # The bridge's goal is the state the prefix is aimed at: the
-            # horizon-th future state, or the episode end if it comes first.
-            goal_index = min(anchor + horizon, length)
-            goals[row] = episode_observations[goal_index]
-            for column, offset in enumerate(offsets):
-                index = min(anchor + offset, length)
-                targets[row, column] = episode_observations[index]
-                valid[row, column] = float(anchor + offset <= length)
+            goals[row] = episode_observations[anchor + segment]
+            waypoints[row] = episode_observations[anchor + offset]
         return {
             'observations': observations,
             'goals': goals,
-            'bridge_targets': targets,
-            'bridge_valid': valid,
+            'waypoints': waypoints,
+            'segment_lengths': segment_lengths.astype(np.float32),
+            'waypoint_offsets': waypoint_offsets.astype(np.float32),
         }
 
     # -- persistence ---------------------------------------------------
@@ -239,6 +277,8 @@ class EpisodicReplayBuffer:
             'episode_lengths': np.array(
                 [episode[1].shape[0] for episode in self._episodes], dtype=np.int64
             ),
+            'episode_ids': np.array(self._episode_ids, dtype=np.int64),
+            'episodes_inserted': np.int64(self._episodes_inserted),
             'total_inserted': np.int64(self._total_inserted),
             'rng_state': self._rng.bit_generator.state,
         }
@@ -262,5 +302,7 @@ class EpisodicReplayBuffer:
             observation_start += length + 1
             action_start += length
             self._num_transitions += length
+        self._episode_ids = [int(value) for value in state['episode_ids']]
+        self._episodes_inserted = int(state['episodes_inserted'])
         self._total_inserted = int(state['total_inserted'])
         self._rng.bit_generator.state = state['rng_state']

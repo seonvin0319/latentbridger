@@ -1,4 +1,4 @@
-"""Shared config assembly for the online SGCRL comparison."""
+"""Shared config assembly for the online SGCRL raw-bridge comparison."""
 
 from agents.online_sgcrl import VARIANT_SETTINGS, get_config
 
@@ -6,9 +6,9 @@ DEFAULT_VARIANT = 'online_sgcrl'
 
 
 def apply_variant(config, variant: str):
-    """Write the variant's structural choices onto ``config``.
+    """Write the variant's structural choice onto ``config``.
 
-    The variants differ only in the actor's goal interface, so every other
+    The variants differ only in which bridge drives behaviour, so every other
     field stays exactly where the shared default put it.
     """
 

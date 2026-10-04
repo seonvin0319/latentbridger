@@ -104,7 +104,7 @@ def collect_episode(
     rng,
     *,
     random_actions: bool = False,
-    use_bridge: bool | None = None,
+    bridge_mode: str = 'none',
 ) -> tuple[np.ndarray, np.ndarray, dict[str, float], Any]:
     """Run one behaviour episode toward the task's fixed goal.
 
@@ -112,6 +112,10 @@ def collect_episode(
     goal is the task goal for the whole episode: SGCRL collects against one
     goal and relabels in hindsight at training time, so the collector must not
     sneak hindsight goals into the behaviour policy.
+
+    A bridge variant replans its waypoint from the state reached after every
+    environment step, so ``agent.act`` is called with the live observation and
+    the unchanged final goal.
     """
 
     observation, goal = _reset(env, entry)
@@ -143,7 +147,7 @@ def collect_episode(
                         goal_batch,
                         action_rng,
                         deterministic=False,
-                        use_bridge=use_bridge,
+                        bridge_mode=bridge_mode,
                     )
                 ),
                 dtype=np.float32,
@@ -176,7 +180,7 @@ def evaluate_online(
     *,
     manifest: Sequence[Mapping[str, int]],
     rng,
-    use_bridge: bool | None = None,
+    bridge_mode: str = 'none',
 ) -> dict[str, Any]:
     """Deterministic (mode-action) evaluation over a paired episode manifest."""
 
@@ -208,7 +212,7 @@ def evaluate_online(
                         goal_batch,
                         action_rng,
                         deterministic=True,
-                        use_bridge=use_bridge,
+                        bridge_mode=bridge_mode,
                     )
                 ),
                 dtype=np.float32,
