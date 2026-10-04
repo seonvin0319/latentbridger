@@ -37,10 +37,10 @@ _DIAGNOSTIC_NAME = re.compile(r'^diagnostics_(?P<step>\d+)\.json$')
 
 # (column, json key).  Scalars that summarize one aspect of the method.
 DIAGNOSTIC_COLUMNS = (
-    ('recall_at_1', 'diagnostics/future_retrieval/recall_at_1'),
-    ('recall_at_5', 'diagnostics/future_retrieval/recall_at_5'),
-    ('positive_rank', 'diagnostics/future_retrieval/mean_positive_rank'),
-    ('positive_negative_gap', 'diagnostics/future_retrieval/positive_negative_gap'),
+    ('recall_at_1', 'diagnostics/retrieval/recall_at_1'),
+    ('recall_at_5', 'diagnostics/retrieval/recall_at_5'),
+    ('positive_rank', 'diagnostics/retrieval/mean_positive_rank'),
+    ('positive_negative_gap', 'diagnostics/retrieval/score_gap'),
     ('p_data_gt_shuffled', 'diagnostics/action_sensitivity/p_data_gt_shuffled'),
     ('p_data_gt_uniform', 'diagnostics/action_sensitivity/p_data_gt_uniform'),
     ('p_data_gt_hard', 'diagnostics/action_sensitivity/p_data_gt_hard'),
