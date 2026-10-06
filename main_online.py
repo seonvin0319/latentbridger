@@ -215,7 +215,15 @@ def main(_):
     random.seed(FLAGS.seed)
     np.random.seed(FLAGS.seed)
 
-    env = make_online_env(str(config.env_name))
+    goal_slice = tuple(int(piece) for piece in config.oracle_goal_slice)
+    env = make_online_env(
+        str(config.env_name), oracle_goals=int(goal_slice[0]) >= 0
+    )
+    if tuple(env.oracle_goal_slice) != goal_slice:
+        raise RuntimeError(
+            f'Config oracle slice {goal_slice} does not match the environment '
+            f'slice {tuple(env.oracle_goal_slice)}.'
+        )
     observation_dim = int(env.observation_space.shape[0])
     action_dim = int(env.action_space.shape[0])
 
@@ -232,6 +240,7 @@ def main(_):
         max_size=int(config.max_replay_size),
         seed=FLAGS.seed,
         holdout_every=int(config.holdout_every),
+        goal_slice=goal_slice,
     )
 
     run_dir = Path(FLAGS.output_dir).resolve()

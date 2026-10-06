@@ -305,6 +305,20 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
     # ------------------------------------------------------------------
     # Bridges
     # ------------------------------------------------------------------
+    def _goal_basis(self, observations):
+        """The vector the goal slot lives in.
+
+        The default is the full observation.  With an oracle slice the goal
+        and the waypoint are the cube position inside that observation, so
+        displacements are taken in that smaller space.
+        """
+
+        start, end = self.config['oracle_goal_slice']
+        start, end = int(start), int(end)
+        if start < 0:
+            return observations
+        return observations[..., start:end]
+
     def det_waypoint(self, observations, goals, params=None):
         return self.det_bridge.select('bridge')(observations, goals, params=params)
 
@@ -315,15 +329,16 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
             batch['observations'], batch['goals'], params=grad_params
         )
         target = batch['waypoints']
+        basis = self._goal_basis(batch['observations'])
         loss = jnp.mean(jnp.square(predicted - target))
         return loss, {
             'det_bridge/loss': loss,
             'det_bridge/waypoint_mse': loss,
             'det_bridge/predicted_displacement_norm': jnp.mean(
-                jnp.linalg.norm(predicted - batch['observations'], axis=-1)
+                jnp.linalg.norm(predicted - basis, axis=-1)
             ),
             'det_bridge/target_displacement_norm': jnp.mean(
-                jnp.linalg.norm(target - batch['observations'], axis=-1)
+                jnp.linalg.norm(target - basis, axis=-1)
             ),
         }
 
@@ -332,7 +347,7 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
 
         observations = batch['observations']
         goals = batch['goals']
-        x_1 = batch['waypoints'] - observations
+        x_1 = batch['waypoints'] - self._goal_basis(observations)
         noise_rng, time_rng = jax.random.split(rng)
         x_0 = jax.random.normal(noise_rng, x_1.shape)
         tau = jax.random.uniform(time_rng, (x_1.shape[0], 1))
@@ -353,7 +368,8 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
     def rf_waypoint(self, observations, goals, rng, params=None):
         """Euler-integrate the flow from noise to a displacement, then add it."""
 
-        displacement = jax.random.normal(rng, observations.shape)
+        basis = self._goal_basis(observations)
+        displacement = jax.random.normal(rng, basis.shape)
         steps = int(self.config['flow_steps'])
         for step in range(steps):
             tau = jnp.full((observations.shape[0], 1), step / steps, dtype=jnp.float32)
@@ -361,7 +377,7 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
                 observations, goals, displacement, tau, params=params
             )
             displacement = displacement + velocity / steps
-        return observations + displacement
+        return basis + displacement
 
     @functools.partial(jax.jit, static_argnames=('bridge_mode',))
     def waypoint(self, observations, goals, rng, bridge_mode):
@@ -453,7 +469,8 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
         observations = batch['observations']
         goals = batch['goals']
         targets = batch['waypoints']
-        true_displacement = targets - observations
+        basis = self._goal_basis(observations)
+        true_displacement = targets - basis
         info: dict[str, Any] = {}
 
         def action_for(goal_input, key):
@@ -477,7 +494,7 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
                     jnp.square(predicted - targets)
                 ),
                 'diagnostics/det_displacement_norm': jnp.mean(
-                    jnp.linalg.norm(predicted - observations, axis=-1)
+                    jnp.linalg.norm(predicted - basis, axis=-1)
                 ),
                 'diagnostics/det_final_goal_score': jnp.mean(
                     self.critic_scores(observations, det_action, goals)
@@ -496,7 +513,7 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
             {
                 'diagnostics/rf_waypoint_mse': jnp.mean(jnp.square(sampled - targets)),
                 'diagnostics/rf_displacement_norm': jnp.mean(
-                    jnp.linalg.norm(sampled - observations, axis=-1)
+                    jnp.linalg.norm(sampled - basis, axis=-1)
                 ),
                 'diagnostics/rf_final_goal_score': jnp.mean(
                     self.critic_scores(observations, rf_action, goals)
@@ -604,6 +621,13 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
         observation_dim = int(ex_observations.shape[-1])
         action_dim = int(ex_actions.shape[-1])
         rows = int(ex_observations.shape[0])
+        goal_slice = tuple(config.get('oracle_goal_slice', (-1, -1)))
+        config['oracle_goal_slice'] = goal_slice
+        if int(goal_slice[0]) >= 0:
+            ex_goals = ex_observations[:, int(goal_slice[0]) : int(goal_slice[1])]
+        else:
+            ex_goals = ex_observations
+        goal_dim = int(ex_goals.shape[-1])
 
         rng = jax.random.PRNGKey(seed)
         rng, critic_rng, actor_rng, det_rng, rf_rng = jax.random.split(rng, 5)
@@ -621,17 +645,18 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
             }
         )
         critic_params = critic_def.init(
-            critic_rng, phi=(ex_observations, ex_actions), psi=(ex_observations,)
+            critic_rng, phi=(ex_observations, ex_actions), psi=(ex_goals,)
         )['params']
         critic = TrainState.create(
             critic_def, critic_params, tx=optimizer(config['learning_rate'])
         )
 
-        # The actor's goal slot always takes a raw observation-shaped vector,
-        # whether that is the final goal or a bridge waypoint.
+        # The goal slot is a full observation, or the oracle cube position
+        # when ``oracle_goal_slice`` is set.  A bridge waypoint uses that
+        # same slot.
         actor_def = ModuleDict({'actor': TanhGaussianActor(hidden_dims, action_dim)})
         actor_params = actor_def.init(
-            actor_rng, actor=(ex_observations, ex_observations)
+            actor_rng, actor=(ex_observations, ex_goals)
         )['params']
         actor = TrainState.create(
             actor_def, actor_params, tx=optimizer(config['actor_learning_rate'])
@@ -639,10 +664,10 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
 
         bridge_dims = tuple(int(width) for width in config['bridge_hidden_dims'])
         det_def = ModuleDict(
-            {'bridge': DeterministicBridge(bridge_dims, observation_dim)}
+            {'bridge': DeterministicBridge(bridge_dims, goal_dim)}
         )
         det_params = det_def.init(
-            det_rng, bridge=(ex_observations, ex_observations)
+            det_rng, bridge=(ex_observations, ex_goals)
         )['params']
         det_bridge = TrainState.create(
             det_def, det_params, tx=optimizer(config['bridge_learning_rate'])
@@ -650,10 +675,10 @@ class OnlineSGCRLAgent(flax.struct.PyTreeNode):
 
         ex_times = jnp.zeros((rows, 1), dtype=jnp.float32)
         rf_def = ModuleDict(
-            {'bridge': RectifiedFlowBridge(bridge_dims, observation_dim)}
+            {'bridge': RectifiedFlowBridge(bridge_dims, goal_dim)}
         )
         rf_params = rf_def.init(
-            rf_rng, bridge=(ex_observations, ex_observations, ex_observations, ex_times)
+            rf_rng, bridge=(ex_observations, ex_goals, ex_goals, ex_times)
         )['params']
         rf_bridge = TrainState.create(
             rf_def, rf_params, tx=optimizer(config['bridge_learning_rate'])
@@ -692,6 +717,10 @@ def get_config() -> ml_collections.ConfigDict:
             # adaptive-alpha branch; the actor stays stochastic but gets no
             # entropy bonus.
             entropy_coefficient=0.0,
+            # (-1, -1) keeps the goal equal to the full observation.  A
+            # non-negative slice, used by the cube oracle run, takes the
+            # scaled cube position out of that observation instead.
+            oracle_goal_slice=(-1, -1),
             # Replay.
             min_replay_size=10_000,
             max_replay_size=1_000_000,

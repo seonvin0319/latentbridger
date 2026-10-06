@@ -30,16 +30,70 @@ __all__ = [
 ]
 
 
-def make_online_env(env_name: str):
-    """Create the OGBench environment without loading any offline dataset.
+def make_online_env(env_name: str, oracle_goals: bool = False):
+    """Create the training environment without loading an offline dataset.
 
-    Online training generates all of its own data, so pulling the multi-
-    gigabyte offline shards would only cost startup time and disk.
+    OGBench names go through ``ogbench`` with ``env_only=True``.  The four
+    names the original SGCRL launcher actually runs (``sawyer_bin``,
+    ``sawyer_box``, ``sawyer_peg``, ``point_Spiral11x11``) are built by
+    :func:`envs.sgcrl_orig.make_sgcrl_env`.
+
+    ``oracle_goals`` asks OGBench for its oracle goal, which on cube-single
+    is the scaled cube position rather than a full goal observation.  The
+    matching slice of the state observation is stored on the env so hindsight
+    relabeling can recover that same vector from a stored state.
     """
+
+    name = str(env_name)
+    if name.startswith('sawyer_') or name.startswith('point_'):
+        if oracle_goals:
+            raise ValueError('Oracle goals are only defined for OGBench cubes.')
+        from envs.sgcrl_orig import make_sgcrl_env
+
+        env = make_sgcrl_env(name)
+        env.oracle_goal_slice = (-1, -1)
+        return env
 
     import ogbench
 
-    return ogbench.make_env_and_datasets(str(env_name), env_only=True)
+    env = ogbench.make_env_and_datasets(
+        name, env_only=True, use_oracle_rep=bool(oracle_goals)
+    )
+    if not oracle_goals:
+        env.oracle_goal_slice = (-1, -1)
+        return env
+    env.action_space.seed(0)
+    observation, info = env.reset(
+        seed=0, options={'task_id': 1, 'render_goal': False}
+    )
+    observation = np.asarray(observation, dtype=np.float32)
+    oracle_now = np.asarray(
+        env.unwrapped.compute_oracle_observation(), dtype=np.float32
+    )
+    goal = np.asarray(info['goal'], dtype=np.float32)
+    if oracle_now.shape != goal.shape:
+        raise RuntimeError(
+            f'Oracle state {oracle_now.shape} and goal {goal.shape} differ.'
+        )
+    width = int(oracle_now.shape[0])
+    found = None
+    for start in range(observation.shape[0] - width + 1):
+        if np.allclose(observation[start : start + width], oracle_now):
+            found = (start, start + width)
+            break
+    if found is None:
+        raise RuntimeError('The oracle cube position is not inside the state.')
+    env.oracle_goal_slice = found
+    return env
+
+
+def _goal_distance(observation: np.ndarray, goal: np.ndarray, env: Any) -> float:
+    """Distance in the space the actor's goal slot uses."""
+
+    sl = getattr(env, 'oracle_goal_slice', None)
+    if sl is not None and int(sl[0]) >= 0:
+        observation = np.asarray(observation)[int(sl[0]) : int(sl[1])]
+    return float(np.linalg.norm(np.asarray(observation) - np.asarray(goal)))
 
 
 def online_episode_manifest(
@@ -164,7 +218,7 @@ def collect_episode(
     metrics = {
         'success': float(success),
         'length': float(len(actions)),
-        'final_distance': float(np.linalg.norm(observations[-1] - goal)),
+        'final_distance': _goal_distance(observations[-1], goal, env),
     }
     return (
         np.asarray(observations, dtype=np.float32),
@@ -225,7 +279,7 @@ def evaluate_online(
             truncated = bool(truncated)
             steps += 1
         outcomes.append(int(success))
-        final_distances.append(float(np.linalg.norm(observation - goal)))
+        final_distances.append(_goal_distance(observation, goal, env))
         lengths.append(float(steps))
 
     return {

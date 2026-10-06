@@ -61,6 +61,7 @@ class EpisodicReplayBuffer:
         max_size: int = 1_000_000,
         seed: int = 0,
         holdout_every: int = 20,
+        goal_slice: tuple[int, int] | None = None,
     ):
         if not 0.0 < discount < 1.0:
             raise ValueError(f'discount must lie in (0, 1), got {discount}.')
@@ -71,6 +72,18 @@ class EpisodicReplayBuffer:
         if int(holdout_every) < 2:
             raise ValueError(f'holdout_every must be >= 2, got {holdout_every}.')
         self.holdout_every = int(holdout_every)
+        if goal_slice is None or int(goal_slice[0]) < 0:
+            self.goal_slice = None
+            self.goal_dim = self.observation_dim
+        else:
+            start, end = int(goal_slice[0]), int(goal_slice[1])
+            if not 0 <= start < end <= self.observation_dim:
+                raise ValueError(
+                    f'goal_slice {(start, end)} does not fit an observation '
+                    f'of dimension {self.observation_dim}.'
+                )
+            self.goal_slice = (start, end)
+            self.goal_dim = end - start
         self._rng = np.random.default_rng(seed)
         # Each episode is (observations[T+1, obs], actions[T, act]); the extra
         # observation is the final state, which is a valid goal but has no
@@ -84,6 +97,14 @@ class EpisodicReplayBuffer:
         self._episodes_inserted = 0
         self._num_transitions = 0
         self._total_inserted = 0
+
+    def _project_goal(self, states: np.ndarray) -> np.ndarray:
+        """Full state, or the oracle slice of it when one is configured."""
+
+        if self.goal_slice is None:
+            return states
+        start, end = self.goal_slice
+        return states[..., start:end]
 
     # -- writing -------------------------------------------------------
     def add_episode(self, observations: np.ndarray, actions: np.ndarray) -> None:
@@ -200,7 +221,7 @@ class EpisodicReplayBuffer:
 
         observations = np.empty((batch_size, self.observation_dim), dtype=np.float32)
         next_observations = np.empty_like(observations)
-        goals = np.empty_like(observations)
+        goals = np.empty((batch_size, self.goal_dim), dtype=np.float32)
         actions = np.empty((batch_size, self.action_dim), dtype=np.float32)
         for row, (episode_index, anchor, offset) in enumerate(
             zip(episode_indices, anchors, offsets)
@@ -208,7 +229,7 @@ class EpisodicReplayBuffer:
             episode_observations, episode_actions = self._episodes[episode_index]
             observations[row] = episode_observations[anchor]
             next_observations[row] = episode_observations[anchor + 1]
-            goals[row] = episode_observations[anchor + offset]
+            goals[row] = self._project_goal(episode_observations[anchor + offset])
             actions[row] = episode_actions[anchor]
         return {
             'observations': observations,
@@ -242,15 +263,15 @@ class EpisodicReplayBuffer:
         waypoint_offsets = waypoint_index(segment_lengths, alpha)
 
         observations = np.empty((batch_size, self.observation_dim), dtype=np.float32)
-        goals = np.empty_like(observations)
-        waypoints = np.empty_like(observations)
+        goals = np.empty((batch_size, self.goal_dim), dtype=np.float32)
+        waypoints = np.empty((batch_size, self.goal_dim), dtype=np.float32)
         for row, (episode_index, anchor, segment, offset) in enumerate(
             zip(episode_indices, anchors, segment_lengths, waypoint_offsets)
         ):
             episode_observations, _ = self._episodes[episode_index]
             observations[row] = episode_observations[anchor]
-            goals[row] = episode_observations[anchor + segment]
-            waypoints[row] = episode_observations[anchor + offset]
+            goals[row] = self._project_goal(episode_observations[anchor + segment])
+            waypoints[row] = self._project_goal(episode_observations[anchor + offset])
         return {
             'observations': observations,
             'goals': goals,
