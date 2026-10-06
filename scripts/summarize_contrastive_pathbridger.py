@@ -39,9 +39,9 @@ def main():
     lines += ['', '## 1M h=2 across seeds', '', '| Environment | Variant | Completed seeds | Mean ± std |', '|---|---|---:|---|']
     import statistics
     for env in ('cube-single-play-v0','cube-double-play-v0','puzzle-3x3-play-v0','antmaze-medium-navigate-v0'):
-        for variant in ('cpb_rank_only', 'cpb_full'):
+        for variant in ('pathbridger_original', 'cpb_rank_only', 'cpb_full'):
             vals=[d['success'] for d in evaluations if d['env']==env and d['variant']==variant and d['checkpoint']==1000000 and d['h']==2]
-            lines.append(f'| {env} | {variant} | {len(vals)} | '+(f'{statistics.mean(vals):.4f} ± {statistics.pstdev(vals):.4f}' if vals else 'pending')+' |')
+            lines.append(f'| {env} | {variant} | {len(vals)} | '+(f'{statistics.mean(vals):.4f} ± {statistics.pstdev(vals):.4f}' if vals else ('reference unavailable' if variant == 'pathbridger_original' else 'pending'))+' |')
     lines += ['', '## Reference evidence', '', 'Original PathBridger and latent endpoint results require matching protocol and provenance; no baseline is retrained automatically.']
     # Inventory locally available evidence without inventing or pooling incomparable settings.
     for reference in (Path('/home/shchoi/PathBridger/exp'),):
@@ -49,10 +49,35 @@ def main():
         lines.append(f'Local reference root: `{reference}`; {len(paths)} result files found.')
         for path in paths[:40]:
             lines.append(f'- `{path}`')
-    lines += ['', '## Research questions', '',
-              'Q1 (TRL replacement), Q2 (ranking), Q3 (progress weights), Q4 (explicit bridge versus latent chunks), and Q5 (collapse/stability) remain pending until the corresponding runs and matched references are available.',
-              'N=1 on cube-single cannot identify a candidate-ranking benefit. Rank-only versus full isolates proposer weighting; latent effective rank and per-dimension variance diagnose collapse.',
-              'Nearest-state diagnostics use the complete training dataset. Other diagnostic probes use held-out states and are not environment-rollout measurements.']
+    lines += ['', '## Checkpoint diagnostics', '',
+              '| Environment | Variant | Seed | Step | Recall@1 | Phi rank | Psi rank | Nearest state | Prefix L1 | IDM MSE |',
+              '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|']
+    for d in diagnostics:
+        values = [d.get(k, float('nan')) for k in ('critic/recall_at_1', 'phi/effective_rank', 'psi/effective_rank',
+                  'endpoint/selected_nearest_dataset_state_distance', 'bridge/five_step_prefix_error', 'idm/action_mse')]
+        lines.append(f"| {d['env']} | {d['variant']} | {d['seed']} | {d['step']} | " + ' | '.join(f'{v:.5f}' for v in values) + ' |')
+    completed = [json.loads(path.read_text()) for path in root.glob('*/*/seed*/complete.json')]
+    lines += ['', f"Completed 1M runs: {len(completed)}/14. Sum of completed run wall times: "
+              f"{sum(row['wall_seconds'] for row in completed)/3600:.2f} hours.",
+              'Failed runs: see failure.json.' if (root / 'failure.json').exists() else 'Failed runs: none recorded.',
+              '', '## Research questions', '',
+              'Q1: The 1M h=2 table reports whether CPB solves each environment. A claim that it replaces TRL comparably requires matched Original PathBridger results, which are unavailable locally.',
+              'Q2: N>1 candidate scores and top1–top2 margins are recorded in diagnostic_summary.csv. This verifies ranking behavior; a causal ranking benefit requires an unranked-candidate comparison. Cube-single N=1 cannot test ranking.',
+              'Q3: Matched seed0 full-minus-rank-only success differences at 1M h=2:']
+    for env in ('cube-single-play-v0', 'cube-double-play-v0'):
+        paired = {d['variant']: d['success'] for d in evaluations if d['env'] == env and d['seed'] == 0 and d['checkpoint'] == 1000000 and d['h'] == 2}
+        delta = paired.get('cpb_full', 0) - paired.get('cpb_rank_only', 0)
+        lines.append(f"- {env}: " + (f'{delta:+.4f} (one paired seed; not a multi-seed significance claim).' if {'cpb_full', 'cpb_rank_only'} <= paired.keys() else 'pending both 1M results.'))
+    lines += ['', 'Q4: The requested current latent-endpoint AWR direct/guided results are not present in the local reference root. Older latent flow and online SGCRL runs are not substituted for them. No remote choi process is accessed.',
+              'Q5: Finite training metrics are checked on every update. Per-dimension std, norms, covariance eigenvalues and effective ranks are recorded at each checkpoint.']
+    if diagnostics:
+        for encoder in ('phi', 'psi'):
+            ranks = [d[f'{encoder}/effective_rank'] for d in diagnostics if f'{encoder}/effective_rank' in d]
+            if ranks:
+                lines.append(f"Observed {encoder} effective-rank range: {min(ranks):.2f}–{max(ranks):.2f} of 64. These finite probes do not rule out later collapse or task-specific representation loss.")
+    else:
+        lines.append('No production checkpoint diagnostics yet; the smoke below is preliminary.')
+    lines += ['', 'Nearest-state diagnostics use the complete training dataset. Other diagnostic probes use held-out states and are not environment-rollout measurements.']
     smoke = root / 'smoke/diagnostics_2000.json'
     if smoke.exists():
         d = json.loads(smoke.read_text())
