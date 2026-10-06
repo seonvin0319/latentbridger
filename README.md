@@ -25,6 +25,86 @@ include the research-only path-weighting or stochastic-bridge extensions. There
 is no neural actor, action-conditioned critic, actor fine-tuning stage, or
 legacy algorithm switch.
 
+The released PathBridger entry points are `main.py` and `evaluate.py`. This
+branch also keeps four later experiments beside that code. They do not change
+`agents/pathbridger.py`.
+
+| Line | Agent | Train | Configs |
+|---|---|---|---|
+| PathBridger (paper) | `agents/pathbridger.py` | `main.py` | `configs/pbf`, `configs/pbg` |
+| LatentBridger | `agents/latentbridger.py` | `main_latent.py` | `configs/latent` |
+| Latent endpoint chunks | `agents/latent_endpoint_chunk.py` | `main_latent_endpoint_chunk.py` | `configs/latent_endpoint_chunk` |
+| Online SGCRL | `agents/online_sgcrl.py` | `main_online.py` | `configs/online` |
+| Contrastive PathBridger | `agents/contrastive_pathbridger.py` | `main_contrastive_pathbridger.py` | `configs/cpb` |
+
+LatentBridger trains a contrastive critic, a latent-conditioned actor, and a
+latent flow in separate stages (`critic`, `actor`, `flow`, `joint`). The
+endpoint-chunk line plans in a latent endpoint space and decodes action chunks.
+Online SGCRL trains against one task goal; the x-axis is environment steps, and
+`docs/sgcrl_online_semantics.md` records the update-to-data ratio. Run outputs
+stay under `exp/` and are not part of the source tree.
+
+## Contrastive PathBridger
+
+Contrastive PathBridger keeps PathBridger's endpoint proposer, pinned state
+bridge, and inverse-dynamics model, and replaces the transitive-value ranking
+signal with an action-free reachability critic
+$C(s,g)=\phi(s)^\top \psi(g)$.
+
+`ψ` sees the task-goal projection (AntMaze XY, cube positions, or puzzle
+buttons). `φ` sees the full state. Cross-anchor ranking uses the bank-calibrated
+score `C̄(s,g)=C(s,g)−log Z(s)`. Design notes are in `docs/CPB_DESIGN.md`.
+
+Two trained variants share that critic:
+
+- `cpb_full` weights endpoint flow-matching by calibrated progress. The weight
+  is 1 through 100k, rises linearly to the progress weight by 200k, and stays
+  there. Weights are stop-gradient, clipped, and capped at 5.
+- `cpb_rank_only` is the same run with those weights fixed at 1. It is the
+  seed-0 paired ablation on every configured environment, not a second
+  multi-seed study.
+
+`pathbridger_original` is an optional reference dispatch back to the released
+agent. It is not in the default suite.
+
+The calibrated environments are `cube_single`, `cube_double`, `antmaze_medium`,
+and `puzzle_3x3`. Each config reuses the released horizon, discount, candidate
+count, and temperature, and drops the TRL value-scale and distance-weight
+fields. Default suite order is cube-double, AntMaze, then puzzle. `cube_single`
+is included by passing it in `--configs`. Training is one joint objective for
+1M updates. Checkpoints and evaluations are at 100k, 300k, 500k, 800k, and 1M.
+Each checkpoint evaluates execution horizons `h=5`, `h=2`, and `h=1`, with 50
+episodes on each of the five OGBench tasks. `h=5` is the primary setting.
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements-cpb.lock.txt
+.venv/bin/python scripts/run_contrastive_pathbridger_suite.py --resume --skip_existing
+```
+
+The runner finishes every environment at one seed before starting the next
+seed. Inside a seed it runs two jobs at once (`--parallel`, default 2).
+Rank-only is scheduled only for seed 0. Full runs use every requested seed.
+`cube_single` full seed 0 first stops at 100k for a representation sanity
+check, keeps that checkpoint, and then resumes the same 1M run.
+
+```bash
+.venv/bin/python scripts/run_contrastive_pathbridger_suite.py \
+  --configs puzzle_3x3 antmaze_medium \
+  --variants cpb_rank_only \
+  --seeds 0 \
+  --resume --skip_existing
+```
+
+Other flags: `--train_steps`, `--dataset_dir`, `--save_dir`, `--use_wandb`,
+and `--gates-passed` (reuse the current-source test and smoke record instead
+of rerunning them). One training directory looks like
+`exp/contrastive_pathbridger/<env>/<variant>/seed<k>/` and holds `run.log`,
+`train.jsonl`, `checkpoints/params_<step>.pkl`, and
+`evaluation_<step>_h<h>.json`. Summaries are written by
+`scripts/summarize_contrastive_pathbridger.py`. A single checkpoint can be
+re-evaluated with `evaluate_contrastive_pathbridger.py`.
+
 ## Architecture
 
 ![PathBridger bridge-policy architecture](assets/architecture.jpg)
@@ -34,25 +114,37 @@ The diagram is the method overview bundled with the PathBridger paper source.
 ## Layout
 
 ```text
-PathBridger/
+latentbridger/
 ├── agents/
-│   └── pathbridger.py       # Complete algorithm and its fixed constants.
+│   ├── pathbridger.py              # Released algorithm and its fixed constants.
+│   ├── contrastive_pathbridger.py  # Reachability critic on the released policy modules.
+│   ├── latentbridger.py
+│   ├── latent_endpoint_chunk.py
+│   └── online_sgcrl.py
 ├── assets/
-│   └── architecture.jpg     # Paper's bridge-policy overview.
+│   └── architecture.jpg            # Paper's bridge-policy overview.
 ├── configs/
-│   ├── pbf/                 # Eight PBF paper configurations.
-│   └── pbg/                 # Eight PBG paper configurations.
+│   ├── pbf/  pbg/                  # Eight paper configurations each.
+│   ├── cpb/                        # Four calibrated CPB environments.
+│   ├── latent/  latent_endpoint_chunk/  online/
+├── docs/
+│   ├── CPB_DESIGN.md
+│   └── sgcrl_online_semantics.md
 ├── envs/
-│   └── env_utils.py         # State-based compact OGBench loading.
+│   └── env_utils.py                # State-based compact OGBench loading.
+├── scripts/
+│   └── run_contrastive_pathbridger_suite.py
 ├── utils/
-│   ├── datasets.py          # Path, endpoint, and transitive-value batches.
-│   ├── evaluation.py        # Five-task OGBench environment evaluation.
-│   ├── flax_utils.py        # Unified checkpoints and training state.
+│   ├── datasets.py                 # Path, endpoint, and transitive-value batches.
+│   ├── evaluation.py               # Five-task OGBench environment evaluation.
+│   ├── flax_utils.py               # Unified checkpoints and training state.
 │   ├── goal_representation.py
 │   ├── log_utils.py
-│   └── networks.py
-├── main.py                  # Offline training.
-└── evaluate.py              # Standalone checkpoint evaluation.
+│   ├── networks.py
+│   └── cpb_*.py                    # CPB bank, diagnostics, and evaluation.
+├── main.py                         # Released offline training.
+├── evaluate.py                     # Released checkpoint evaluation.
+└── main_contrastive_pathbridger.py # One calibrated CPB run.
 ```
 
 The root entry points only assemble experiments. The complete PathBridger
