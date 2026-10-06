@@ -74,7 +74,7 @@ def main():
                             raise subprocess.CalledProcessError(code,proc.args)
                         break
                     except subprocess.TimeoutExpired:
-                        current=len(list(output.glob('*/*/seed*/evaluation_*.json')))
+                        current=len(list(output.glob('*/*/seed*/evaluation_[0-9]*_h*.json')))
                         if current!=count:
                             summarize();count=current
             except BaseException:

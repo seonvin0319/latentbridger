@@ -284,3 +284,17 @@ def test_evaluation_cache_does_not_change_training_graph(agent,batch):
     cached,_=agent.with_reference_cache().update(batch[0])
     for x,y in zip(jax.tree_util.tree_leaves(plain.network),jax.tree_util.tree_leaves(cached.network)):
         np.testing.assert_array_equal(x,y)
+
+
+def test_report_ignores_episode_manifest(tmp_path):
+    import json
+    from scripts.summarize_contrastive_pathbridger import aggregate
+    run=tmp_path/'cube_single/cpb_full/seed0';run.mkdir(parents=True)
+    (run/'evaluation_manifest.json').write_text(json.dumps([{'task_id':1,'env_seed':10000}]))
+    (run/'config.json').write_text(json.dumps({'agent':{'env_name':'cube-single-play-v0','variant':'cpb_full'},'runtime':{'seed':0}}))
+    (run/'train.jsonl').write_text(json.dumps({'step':1000,'loss/total':1.,'wall_seconds':3.})+'\n')
+    (run/'evaluation_100000_h5.json').write_text(json.dumps(dict(env='cube-single-play-v0',variant='cpb_full',seed=0,checkpoint=100000,h=5,overall_success=.4,success_count=100,N=1,temperature=0)))
+    aggregate(tmp_path)
+    assert len((tmp_path/'evaluation_summary.csv').read_text().splitlines())==2
+    assert len((tmp_path/'learning_curves.csv').read_text().splitlines())==2
+    assert '0.4000' in (tmp_path/'SUMMARY.md').read_text()
