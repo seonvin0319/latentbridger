@@ -10,17 +10,16 @@ import sys
 import time
 
 ROOT=Path(__file__).resolve().parents[1]
-ENVS=('cube_single','cube_double','puzzle_3x3','antmaze_medium')
+ENVS=('cube_single','cube_double','antmaze_medium','puzzle_3x3')
+DEFAULT_ENVS=('cube_double','antmaze_medium','puzzle_3x3')
 
 
-def schedule(configs=ENVS, variants=('cpb_rank_only','cpb_full'), seeds=(0,1,2)):
-    for env in ENVS:
-        if env not in configs:
-            continue
+def schedule(configs=DEFAULT_ENVS, variants=('cpb_rank_only','cpb_full'), seeds=(0,1,2)):
+    for env in configs:
         if 'pathbridger_original' in variants:
             for seed in seeds:
                 yield env,'pathbridger_original',seed
-        if env in ENVS[:2] and 'cpb_rank_only' in variants and 0 in seeds:
+        if env in ('cube_single','cube_double') and 'cpb_rank_only' in variants and 0 in seeds:
             yield env,'cpb_rank_only',0
         if 'cpb_full' in variants:
             for seed in sorted(seeds):
@@ -37,7 +36,7 @@ def source_digest():
 
 def parser():
     p=argparse.ArgumentParser()
-    p.add_argument('--configs',nargs='+',default=list(ENVS))
+    p.add_argument('--configs',nargs='+',default=list(DEFAULT_ENVS))
     p.add_argument('--variants',nargs='+',choices=('cpb_full','cpb_rank_only','pathbridger_original'),default=['cpb_rank_only','cpb_full'])
     p.add_argument('--seeds',nargs='+',type=int,default=[0,1,2])
     p.add_argument('--train_steps',type=int,default=1000000)
