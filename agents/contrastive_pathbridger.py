@@ -14,7 +14,7 @@ from agents.pathbridger import (
     _replace_module_params, _HIDDEN_DIMS, _LAYER_NORM, _LEARNING_RATE,
     _ACTION_HORIZON,
 )
-from utils.flax_utils import ModuleDict, TrainState
+from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.goal_representation import goal_representation, infer_phi_goal_obs_indices, assert_phi_goal_obs_indices
 from utils.networks import MLP
 
@@ -25,8 +25,8 @@ class ReachabilityEncoder(nn.Module):
     repr_norm: bool = False
 
     @nn.compact
-    def __call__(self, states):
-        inputs = goal_representation(states, 'phi', env_name=self.env_name) if self.goal else states
+    def __call__(self, states, *, projected=False):
+        inputs = goal_representation(states, 'phi', env_name=self.env_name) if self.goal and not projected else states
         out = MLP((*_HIDDEN_DIMS, self.repr_dim), activate_final=False, layer_norm=True)(inputs)
         if self.repr_norm:
             out = out / jnp.maximum(jnp.linalg.norm(out, axis=-1, keepdims=True), 1e-8)
@@ -72,12 +72,49 @@ def progress_weights(delta, step, progress_scale=1.0, enabled=True):
     }
 
 
+def log_mean_exp(scores):
+    """Stable log partition; the last dimension enumerates reference goals."""
+    return jax.scipy.special.logsumexp(scores, axis=-1) - jnp.log(scores.shape[-1])
+
+
 class ContrastivePathBridgerAgent(PathBridgerAgent):
-    def score(self, states, goals, *, target=False, params=None):
+    reference_goal_bank: Any
+    reference_online_embeddings: Any
+    reference_target_embeddings: Any
+    reference_cache_valid: bool = nonpytree_field(default=False)
+
+    def raw_score(self, states, goals, *, target=False, params=None):
         prefix = 'target_' if target else ''
         u = self.network.select(prefix + 'phi')(states, params=params)
         v = self.network.select(prefix + 'psi')(goals, params=params)
         return jnp.sum(u * v, axis=-1)
+
+    def _reference_embeddings(self, reference_goal_bank=None, *, target=False):
+        if reference_goal_bank is None and self.reference_cache_valid:
+            return self.reference_target_embeddings if target else self.reference_online_embeddings
+        bank = self.reference_goal_bank if reference_goal_bank is None else reference_goal_bank
+        name = 'target_psi' if target else 'psi'
+        return self.network.select(name)(bank, projected=True)
+
+    def log_partition(self, states, reference_goal_bank=None, *, target=False):
+        u = self.network.select('target_phi' if target else 'phi')(states)
+        references = self._reference_embeddings(reference_goal_bank, target=target)
+        return log_mean_exp(u @ references.T)
+
+    def calibrated_score(self, states, goals, reference_goal_bank=None, *, target=False):
+        return self.raw_score(states, goals, target=target) - self.log_partition(
+            states, reference_goal_bank, target=target)
+
+    def target_calibrated_score(self, states, goals, reference_goal_bank=None):
+        return self.calibrated_score(states, goals, reference_goal_bank, target=True)
+
+    @jax.jit
+    def with_reference_cache(self):
+        """Cache psi(bank) for this immutable critic snapshot; updates invalidate it."""
+        return self.replace(
+            reference_online_embeddings=self.network.select('psi')(self.reference_goal_bank, projected=True),
+            reference_target_embeddings=self.network.select('target_psi')(self.reference_goal_bank, projected=True),
+            reference_cache_valid=True)
 
     def value_loss(self, batch, grad_params):
         u = self.network.select('phi')(batch['observations'], params=grad_params)
@@ -87,7 +124,7 @@ class ContrastivePathBridgerAgent(PathBridgerAgent):
         return self.config['lambda_CR'] * loss, info
 
     def _progress(self, observations, goals, endpoints):
-        delta = self.score(endpoints, goals, target=True) - self.score(observations, goals, target=True)
+        delta = self.target_calibrated_score(endpoints, goals) - self.target_calibrated_score(observations, goals)
         weights, info = progress_weights(delta, self.network.step, self.config['progress_scale'],
                                          self.config['variant'] == 'cpb_full')
         return weights, jax.lax.stop_gradient(delta), info
@@ -120,7 +157,10 @@ class ContrastivePathBridgerAgent(PathBridgerAgent):
             raise KeyError(f'Missing CPB fields: {missing}')
         if batch['bridge_targets'].shape[1] != 5:
             raise ValueError('Bridge prefix must remain five states')
-        return self._update_impl({key: batch[key] for key in keys})
+        # Training always uses one uncached graph, independent of prior evaluation.
+        training_agent = self.replace(reference_cache_valid=False)
+        updated, info = training_agent._update_impl({key: batch[key] for key in keys})
+        return updated.replace(reference_cache_valid=False), info
 
     def rank_candidates(self, candidates, goals, *, target=False):
         batch_size, n, dim = candidates.shape
@@ -128,7 +168,7 @@ class ContrastivePathBridgerAgent(PathBridgerAgent):
         if n == 1:
             return candidates[:, 0], jnp.zeros((batch_size,), dtype=jnp.int32)
         flat_goals = jnp.broadcast_to(goals[:, None], (batch_size, n, goals.shape[-1])).reshape(-1, goals.shape[-1])
-        scores = self.score(candidates.reshape(-1, dim), flat_goals, target=target).reshape(batch_size, n)
+        scores = self.calibrated_score(candidates.reshape(-1, dim), flat_goals, target=target).reshape(batch_size, n)
         best = jnp.argmax(scores, axis=1)
         return jnp.take_along_axis(candidates, best[:, None, None], axis=1)[:, 0], best
 
@@ -144,7 +184,7 @@ class ContrastivePathBridgerAgent(PathBridgerAgent):
         num_candidates: int | None = None,
         temperature: float | None = None,
     ) -> jnp.ndarray:
-        """Sample endpoints, select only by online C(z,g), and decode actions."""
+        """Sample endpoints, select only by online calibrated Cbar(z,g), and decode actions."""
 
         if seed is None:
             seed = jax.random.PRNGKey(0)
@@ -195,6 +235,8 @@ class ContrastivePathBridgerAgent(PathBridgerAgent):
         ex_observations: jnp.ndarray,
         ex_actions: jnp.ndarray,
         config: dict[str, Any],
+        *,
+        reference_goal_bank=None,
     ) -> 'ContrastivePathBridgerAgent':
         """Initialize all PathBridger modules and the joint optimizer."""
 
@@ -255,6 +297,12 @@ class ContrastivePathBridgerAgent(PathBridgerAgent):
             where='PathBridgerAgent.create (endpoint goal representation)',
             env_name=env_name,
         )
+        if reference_goal_bank is None:
+            raise ValueError('CPB requires a fixed reference bank sampled from training future goals')
+        bank = jnp.asarray(reference_goal_bank, dtype=jnp.float32)
+        goal_dim = goal_representation(observations, 'phi', env_name=env_name).shape[-1]
+        if bank.shape != (int(config['reference_bank_size']), goal_dim):
+            raise ValueError(f'Expected projected reference bank shape {(config["reference_bank_size"], goal_dim)}, got {bank.shape}')
         encoders = {name: ReachabilityEncoder(env_name, goal=('psi' in name),
                      repr_dim=config['repr_dim'], repr_norm=config['repr_norm'])
                     for name in ('phi', 'psi', 'target_phi', 'target_psi')}
@@ -307,6 +355,9 @@ class ContrastivePathBridgerAgent(PathBridgerAgent):
             rng=rng,
             network=network,
             config=flax.core.FrozenDict(config),
+            reference_goal_bank=bank,
+            reference_online_embeddings=jnp.zeros((len(bank), config['repr_dim'])),
+            reference_target_embeddings=jnp.zeros((len(bank), config['repr_dim'])),
         )
 
 
@@ -318,5 +369,5 @@ def get_config():
     del config['value_distance_weight_power']
     config.update(dict(variant='cpb_full', repr_dim=64, repr_norm=False,
                        contrastive_temperature=1.0, logsumexp_coef=0.01,
-                       progress_scale=1.0, lambda_CR=1.0))
+                       progress_scale=1.0, lambda_CR=1.0, reference_bank_size=512, calibration='fixed_future_bank_v1'))
     return config

@@ -9,6 +9,7 @@ from agents.pathbridger import PathBridgerAgent, FlowEndpointProposer, BridgeRes
 from utils.datasets import Dataset, PathBridgerDataset
 from utils.goal_representation import goal_representation
 from utils.flax_utils import save_agent, restore_agent
+from utils.cpb_reference_bank import make_reference_goal_bank, checkpoint_reference_bank
 
 
 @pytest.fixture(scope='module')
@@ -23,7 +24,7 @@ def batch():
 @pytest.fixture(scope='module')
 def agent(batch):
     b, _ = batch
-    return Agent.create(0, b['observations'], b['actions'], get_config())
+    return Agent.create(0, b['observations'], b['actions'], get_config(), reference_goal_bank=make_reference_goal_bank(batch[1],0))
 
 
 def test_future_stays_in_episode(batch):
@@ -73,7 +74,7 @@ def test_rank_only_unweighted():
 def test_same_goal_delta(agent,batch):
     b,_=batch
     _,delta=agent._endpoint_weights(b['observations'],b['endpoint_goals'],b['endpoint_targets'])
-    expected=agent.score(b['endpoint_targets'],b['endpoint_goals'],target=True)-agent.score(b['observations'],b['endpoint_goals'],target=True)
+    expected=agent.target_calibrated_score(b['endpoint_targets'],b['endpoint_goals'])-agent.target_calibrated_score(b['observations'],b['endpoint_goals'])
     np.testing.assert_allclose(delta,expected)
 
 
@@ -85,9 +86,9 @@ def test_ema_after_online_update(agent,batch):
             np.testing.assert_allclose(target,.005*new+.995*old,rtol=1e-5,atol=1e-7)
 
 
-def test_rank_only_C_z_g_and_single_bypass():
+def test_rank_only_calibrated_z_g_and_single_bypass():
     class Fake:
-        def score(self,states,goals,**kwargs):
+        def calibrated_score(self,states,goals,**kwargs):
             # Fails if current observations or intermediate goals enter score.
             np.testing.assert_array_equal(goals,np.array([[9.,9.],[9.,9.]]))
             return states[:,0]
@@ -96,7 +97,7 @@ def test_rank_only_C_z_g_and_single_bypass():
     assert int(best[0]) == 1
     np.testing.assert_array_equal(selected,[[5.,0.]])
     class NoCritic:
-        def score(self,*args,**kwargs): raise AssertionError('N=1 called critic')
+        def calibrated_score(self,*args,**kwargs): raise AssertionError('N=1 called critic')
     selected,_=Agent.rank_candidates(NoCritic(),candidates[:,:1],jnp.array([[9.,9.]]))
     np.testing.assert_array_equal(selected,[[2.,0.]])
 
@@ -188,3 +189,98 @@ def test_original_policy_numerically_preserved(agent,batch):
         np.testing.assert_array_equal(actual,expected)
     _,info=original.update(b)
     assert all(np.isfinite(np.asarray(x)) for x in info.values())
+
+
+def test_geometric_gamma(batch):
+    _, dataset = batch
+    np.random.seed(192)
+    starts = np.zeros(40000, dtype=np.int64)
+    goals, _ = dataset._sample_goal_indices(starts, np.full_like(starts, 59), dataset.critic_p)
+    for k in (2, 10, 30, 59):
+        assert abs(np.mean(goals >= k) - dataset.discount ** (k - 1)) < .012
+
+
+def test_reference_future_marginal_and_rng(batch, monkeypatch):
+    _, dataset = batch
+    calls=[]
+    original=dataset.sample
+    def spy(size):
+        b=original(size); calls.append(b['value_goals'].copy()); return b
+    monkeypatch.setattr(dataset,'sample',spy)
+    np.random.seed(12)
+    state=np.random.get_state()
+    bank=make_reference_goal_bank(dataset,3)
+    actual=np.random.random(4)
+    np.random.set_state(state)
+    np.testing.assert_array_equal(actual,np.random.random(4))
+    assert bank.shape==(512,2) and len(calls)==1
+    np.testing.assert_array_equal(bank,np.asarray(goal_representation(calls[0],'phi',env_name='antmaze-medium-navigate-v0')))
+    np.testing.assert_array_equal(bank,make_reference_goal_bank(dataset,3))
+    assert not np.array_equal(bank,make_reference_goal_bank(dataset,4))
+
+
+def test_log_partition_stability_and_anchor_offset_invariance():
+    from agents.contrastive_pathbridger import log_mean_exp
+    reference=jnp.array([[10000.,10001.,9999.],[-10000.,-9999.,-10001.]])
+    raw=jnp.array([10002.,-9998.])
+    offset=jnp.array([500.,-3000.])
+    expected=raw-log_mean_exp(reference)
+    assert np.isfinite(np.asarray(expected)).all()
+    np.testing.assert_allclose(raw+offset-log_mean_exp(reference+offset[:,None]),expected,atol=.002)
+    ordinary=jnp.array([[1.,2.,3.]])
+    np.testing.assert_allclose(log_mean_exp(ordinary),np.log(np.exp(np.asarray(ordinary)).mean(axis=1)),rtol=1e-6)
+
+
+def test_calibrated_api_and_cache(agent,batch):
+    b,_=batch
+    raw=agent.raw_score(b['observations'],b['value_goals'])
+    partition=agent.log_partition(b['observations'],agent.reference_goal_bank)
+    calibrated=agent.calibrated_score(b['observations'],b['value_goals'])
+    np.testing.assert_allclose(calibrated,raw-partition,atol=1e-6)
+    assert not np.allclose(raw,calibrated)
+    cached=agent.with_reference_cache()
+    np.testing.assert_allclose(cached.calibrated_score(b['observations'],b['value_goals']),calibrated,rtol=1e-5,atol=1e-5)
+    updated,_=cached.update(b)
+    assert not updated.reference_cache_valid
+    fresh=updated.with_reference_cache()
+    np.testing.assert_allclose(updated.calibrated_score(b['observations'],b['value_goals']),fresh.calibrated_score(b['observations'],b['value_goals']),rtol=1e-5,atol=1e-5)
+
+
+def test_exact_resume_including_bank_optimizer_and_sampler(agent,batch,tmp_path):
+    _,dataset=batch
+    np.random.seed(329)
+    a,_=agent.update(dataset.sample(8))
+    path=save_agent(a,tmp_path,1)
+    next_batch=dataset.sample(8)
+    expected,_=a.update(next_batch)
+    restored=restore_agent(agent.replace(reference_goal_bank=jnp.zeros_like(agent.reference_goal_bank)),path)
+    np.testing.assert_array_equal(checkpoint_reference_bank(path),agent.reference_goal_bank)
+    np.testing.assert_array_equal(restored.reference_goal_bank,agent.reference_goal_bank)
+    resumed_batch=dataset.sample(8)
+    for key in next_batch:
+        np.testing.assert_array_equal(next_batch[key],resumed_batch[key])
+    actual,_=restored.update(resumed_batch)
+    for x,y in zip(jax.tree_util.tree_leaves(expected),jax.tree_util.tree_leaves(actual)):
+        np.testing.assert_array_equal(x,y)
+
+
+def test_calibrated_progress_same_goal_and_not_raw():
+    class Fake:
+        config={'progress_scale':1.,'variant':'cpb_full'}
+        network=type('Network',(),{'step':300000})()
+        def target_calibrated_score(self,states,goals):
+            np.testing.assert_array_equal(goals,[[7.,8.],[7.,8.]])
+            return states[:,0]-3*states[:,1]
+        def raw_score(self,*args,**kwargs):
+            raise AssertionError('Progress must not use raw score')
+    s=jnp.array([[0.,0.],[1.,1.]])
+    z=jnp.array([[2.,1.],[4.,0.]])
+    _,delta,_=Agent._progress(Fake(),s,jnp.array([[7.,8.],[7.,8.]]),z)
+    np.testing.assert_array_equal(delta,[-1.,6.])
+
+
+def test_evaluation_cache_does_not_change_training_graph(agent,batch):
+    plain,_=agent.update(batch[0])
+    cached,_=agent.with_reference_cache().update(batch[0])
+    for x,y in zip(jax.tree_util.tree_leaves(plain.network),jax.tree_util.tree_leaves(cached.network)):
+        np.testing.assert_array_equal(x,y)

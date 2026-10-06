@@ -54,6 +54,8 @@ def _sample_action_chunk(
             'agent.sample_action_chunks must return shape [1, 5, action_dim], '
             f'got {action_chunks.shape}.'
         )
+    if not np.isfinite(action_chunks).all():
+        raise FloatingPointError('Nonfinite IDM actions during evaluation')
     action_chunk = np.squeeze(action_chunks, axis=0)
     if action_chunk.shape[0] != ACTION_CHUNK_HORIZON:
         raise ValueError(
@@ -117,7 +119,7 @@ def evaluate(
     num_candidates: int = 1,
     temperature: float = 1.0,
     seed: int = 0,
-    execute_h: int = 2,
+    execute_h: int = 5,
 ) -> dict[str, float | int]:
     """Evaluate PathBridger on OGBench tasks using five-step IDM chunks.
 
