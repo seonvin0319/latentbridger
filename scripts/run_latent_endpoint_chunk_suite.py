@@ -60,6 +60,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--configs', default=CUBE_CONFIG)
     parser.add_argument('--variants', default=','.join(VARIANTS))
+    parser.add_argument(
+        '--inference_modes',
+        default=','.join(INFERENCE_MODES),
+        help='Comma-separated eval modes, e.g. direct,support_guided_N4.',
+    )
     parser.add_argument('--seeds', default='0,1,2')
     parser.add_argument('--train_steps', type=int, default=1_000_000)
     parser.add_argument('--save_dir', default='exp/latent_endpoint_chunk')
@@ -132,7 +137,7 @@ def _evaluate_actor(args, failed, *, config, variant, seed, checkpoint, run_root
     records = []
     diagnostics = run_root / f'diagnostics_{args.train_steps}.json'
     for execute_h in (1, 2, 5):
-        for mode in INFERENCE_MODES:
+        for mode in args.selected_inference_modes:
             output = run_root / (
                 f'evaluation_{args.train_steps}_{mode}_h{execute_h}.json'
             )
@@ -311,6 +316,15 @@ def main():
     unknown = set(variants) - set(VARIANTS)
     if unknown:
         raise ValueError(f'Unknown variants: {sorted(unknown)}')
+    selected_modes = tuple(
+        item.strip() for item in args.inference_modes.split(',') if item.strip()
+    )
+    unknown_modes = set(selected_modes) - set(INFERENCE_MODES)
+    if not selected_modes or unknown_modes:
+        raise ValueError(
+            f'inference_modes must be a subset of {INFERENCE_MODES}, got {selected_modes!r}.'
+        )
+    args.selected_inference_modes = selected_modes
     seeds = tuple(int(item) for item in args.seeds.split(',') if item.strip())
     configs = tuple(item.strip() for item in args.configs.split(',') if item.strip())
     failed: list[dict[str, object]] = []
