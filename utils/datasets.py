@@ -235,8 +235,10 @@ class PathBridgerDataset:
         # Cache the episode terminal for every state and all starts whose full
         # K-window is present in one episode.
         self._final_for_idx = np.empty(self.size, dtype=np.int64)
+        self._episode_id = np.empty(self.size, dtype=np.int64)
         valid_parts: list[np.ndarray] = []
-        for start, final in zip(self.initial_locs, self.terminal_locs):
+        for episode, (start, final) in enumerate(zip(self.initial_locs, self.terminal_locs)):
+            self._episode_id[start : final + 1] = episode
             self._final_for_idx[start : final + 1] = final
             last_start = int(final) - self.horizon
             if last_start >= int(start):
@@ -399,6 +401,8 @@ class PathBridgerDataset:
                 max_split_offsets
             )
         transitive_idxs = idxs + transitive_offsets
+        path_fields = self._path_positive_fields(idxs, value_goal_idxs, observations)
+        future_action_idxs = idxs[:, None] + self._bridge_offsets[None, :]
 
         return {
             "observations": np.asarray(observations[idxs], dtype=np.float32),
@@ -417,6 +421,54 @@ class PathBridgerDataset:
             "transitive_subgoals": np.asarray(observations[transitive_idxs], dtype=np.float32),
             "transitive_offsets": transitive_offsets.astype(np.float32),
             "transitive_valids": transitive_valids.astype(np.float32),
+            "endpoint_offsets": (endpoint_target_idxs - idxs).astype(np.float32),
+            "future_actions": np.asarray(
+                self.dataset["actions"][future_action_idxs],
+                dtype=np.float32,
+            ),
+            **path_fields,
+        }
+
+    def _path_positive_fields(
+        self,
+        idxs: np.ndarray,
+        goal_idxs: np.ndarray,
+        observations: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        """Up to four ordered states strictly between each value pair.
+
+        A row whose future goal is only one step away, or whose goal is not on
+        the same episode, contributes an all-zero mask.  Sampling does not
+        cross the episode terminal because the goal index is already clipped
+        to that terminal.
+        """
+
+        count = 4
+        batch_size = len(idxs)
+        positive_indices = np.repeat(idxs[:, None], count, axis=1)
+        positive_mask = np.zeros((batch_size, count), dtype=np.float32)
+        anchor_episode = self._episode_id[idxs]
+        positive_episode = np.repeat(anchor_episode[:, None], count, axis=1)
+        for row, (start, goal) in enumerate(zip(idxs, goal_idxs)):
+            start = int(start)
+            goal = int(goal)
+            final = int(self._final_for_idx[start])
+            if goal <= start + 1 or goal > final or int(self._episode_id[goal]) != int(anchor_episode[row]):
+                continue
+            choices = np.arange(start + 1, goal, dtype=np.int64)
+            take = min(count, len(choices))
+            picked = np.random.choice(choices, size=take, replace=False)
+            positive_indices[row, :take] = picked
+            positive_mask[row, :take] = 1.0
+            positive_episode[row, :take] = self._episode_id[picked]
+        return {
+            "path_positive_states": np.asarray(observations[positive_indices], dtype=np.float32),
+            "path_positive_mask": positive_mask,
+            "path_start_indices": idxs.astype(np.int64),
+            "path_goal_indices": np.asarray(goal_idxs, dtype=np.int64),
+            "path_positive_indices": positive_indices.astype(np.int64),
+            "path_anchor_episode": anchor_episode.astype(np.int64),
+            "path_positive_episode": positive_episode.astype(np.int64),
         }
 
 
