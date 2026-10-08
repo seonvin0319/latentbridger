@@ -16,11 +16,16 @@ METHODS = (
     'ctd_pathnce_weighted',
     'ctd_uniform',
     'dtrl_uniform',
-    'ctd_pathnce_uniform',
-    'ctd_pathnce_weighted_bridgegeo',
-    'ctd_pathnce_uniform_bridgegeo',
 )
+LABELS = {
+    'ctd_weighted': 'CTD-W',
+    'dtrl_weighted': 'DTRL-W',
+    'ctd_pathnce_weighted': 'PathNCE-W',
+    'ctd_uniform': 'CTD-U',
+    'dtrl_uniform': 'DTRL-U',
+}
 STEPS = (100_000, 300_000, 500_000, 800_000, 1_000_000)
+COMPARE = ('ctd_weighted', 'dtrl_weighted', 'ctd_pathnce_weighted')
 
 
 def load(path):
@@ -33,6 +38,10 @@ def write_csv(path, rows):
         writer = csv.DictWriter(handle, fieldnames=keys or ['env'])
         writer.writeheader()
         writer.writerows(rows)
+
+
+def pct(value):
+    return f'{100 * float(value):.1f}'
 
 
 def evaluation_rows():
@@ -100,6 +109,15 @@ def select(rows, prefixes, *, cube_only=False):
     ]
 
 
+def success_cell(env, method, horizon=5, step=1_000_000):
+    if method.startswith('CPB'):
+        variant = 'cpb_rank_only' if 'rank' in method else 'cpb_full'
+        record = load(CPB / env / variant / 'seed0' / f'evaluation_{step}_h{horizon}.json')
+    else:
+        record = load(OUT / env / method / 'seed0' / f'evaluation_{step}_h{horizon}.json')
+    return '-' if record is None else pct(record['overall_success'])
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     evaluations = evaluation_rows()
@@ -117,47 +135,133 @@ def main():
     write_csv(OUT / 'nce_diagnostics.csv', select(diagnostics, ('nce/',)))
     write_csv(OUT / 'pathnce_diagnostics.csv', select(diagnostics, ('path/',)))
 
-    by_key = {
-        (row['Environment'], row['Method'], row['h']): row
-        for row in evaluations
-        if row['checkpoint'] == 1_000_000
-    }
     lines = [
         '# CTD PathBridger — seed 0',
         '',
-        'All CTD rows are seed 0 only, 1M updates, 5 tasks × 50 episodes.',
-        'CPB rows are existing files under `exp/contrastive_pathbridger`; they were not retrained.',
-        'No original PBF evaluation artifact with the same protocol was found, so PBF is marked unavailable rather than copied from prose.',
+        'Primary protocol: 1M updates, 5 tasks × 50 episodes, seed 0 only.',
+        'CPB rows are existing files under `exp/contrastive_pathbridger` (not retrained).',
+        'BridgeGeo and remaining all-env ablations are deferred.',
         '',
-        '## Main result',
+        '## Main comparison: CPB rank / CTD-W / DTRL-W / PathNCE-W',
         '',
         '| Environment | Method | h=5 | h=2 | h=1 |',
         '| --- | --- | ---: | ---: | ---: |',
     ]
     display = (
-        'Original PBF',
-        'CPB rank-only',
-        'CPB full',
-        *METHODS,
+        ('CPB rank-only', 'CPB rank-only'),
+        ('ctd_weighted', 'CTD-W'),
+        ('dtrl_weighted', 'DTRL-W'),
+        ('ctd_pathnce_weighted', 'PathNCE-W'),
     )
     for env in ENVS:
-        for method in display:
-            values = []
-            for horizon in (5, 2, 1):
-                row = by_key.get((env, method, horizon))
-                values.append('unavailable' if row is None else f"{100 * float(row['success']):.1f}")
-            lines.append(f"| {env} | {method} | {' | '.join(values)} |")
+        for method, label in display:
+            cells = [success_cell(env, method, horizon) for horizon in (5, 2, 1)]
+            lines.append(f"| {env} | {label} | {' | '.join(cells)} |")
+
+    lines += [
+        '',
+        '## Puzzle emphasis',
+        '',
+        '| Method | 100k | 300k | 500k | 800k | 1M |',
+        '| --- | ---: | ---: | ---: | ---: | ---: |',
+    ]
+    for method, label in display:
+        cells = [success_cell('puzzle_3x3', method, 5, step) for step in STEPS]
+        lines.append(f"| {label} | {' | '.join(cells)} |")
+    pathnce_puzzle = success_cell('puzzle_3x3', 'ctd_pathnce_weighted')
+    lines += [
+        '',
+        f'PathNCE-W puzzle 1M h=5 = **{pathnce_puzzle}**.',
+        'Scheduling rule (exploratory only): >=70 keep PathNCE family; 50-70 puzzle-only PathNCE-U; <50 defer PathNCE-U/BridgeGeo.',
+        '',
+        '## cube-double checkpoint trajectory (h=5)',
+        '',
+        '| Method | 100k | 300k | 500k | 800k | 1M |',
+        '| --- | ---: | ---: | ---: | ---: | ---: |',
+    ]
+    for method in COMPARE + ('dtrl_uniform', 'ctd_uniform'):
+        cells = [success_cell('cube_double', method, 5, step) for step in STEPS]
+        lines.append(f"| {LABELS.get(method, method)} | {' | '.join(cells)} |")
+
+    lines += [
+        '',
+        '## cube-double proposer diagnostics (W/U)',
+        '',
+        '| Method | Step | success h5 | pairwise | best-of-N endpoint | goal-space best-of-N | nearest-data | ESS |',
+        '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    ]
+    for method in ('dtrl_weighted', 'dtrl_uniform', 'ctd_weighted', 'ctd_uniform'):
+        for step in (300_000, 500_000, 800_000, 1_000_000):
+            diag = load(OUT / 'cube_double' / method / 'seed0' / f'diagnostics_{step}.json')
+            succ = success_cell('cube_double', method, 5, step)
+            if diag is None:
+                lines.append(f"| {LABELS[method]} | {step} | {succ} | - | - | - | - | - |")
+                continue
+            ess = diag.get('weight/ess_fraction')
+            ess_s = '-' if ess is None else f'{ess:.3f}'
+            lines.append(
+                f"| {LABELS[method]} | {step} | {succ} | "
+                f"{diag['proposer/pairwise_distance']:.3f} | "
+                f"{diag['proposer/min_true_distance']:.3f} | "
+                f"{diag['proposer/min_goal_distance']:.3f} | "
+                f"{diag['proposer/nearest_reference']:.3f} | {ess_s} |"
+            )
+
+    lines += [
+        '',
+        '## FutureNCE scale diagnostics',
+        '',
+        '| Env | Method | Step | temporal MAE | d mean | d p90 | d p99 | self mean | NCE@1 |',
+        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    ]
+    for env in ('cube_double', 'puzzle_3x3'):
+        for method in COMPARE:
+            for step in (500_000, 1_000_000):
+                diag = load(OUT / env / method / 'seed0' / f'diagnostics_{step}.json')
+                if diag is None:
+                    lines.append(f"| {env} | {LABELS[method]} | {step} | - | - | - | - | - | - |")
+                    continue
+                nce = diag.get('nce/recall_at_1')
+                nce_s = '-' if nce is None else f'{nce:.3f}'
+                def num(key, default=float('nan')):
+                    value = diag.get(key, default)
+                    return float('nan') if value is None else float(value)
+
+                lines.append(
+                    f"| {env} | {LABELS[method]} | {step} | "
+                    f"{num('distance/temporal_mae'):.1f} | "
+                    f"{num('distance/direct_mean'):.1f} | "
+                    f"{num('distance/direct_p90'):.1f} | "
+                    f"{num('distance/direct_p99'):.1f} | "
+                    f"{num('distance/self_mean'):.3g} | {nce_s} |"
+                )
+
+    sweep = load(OUT / 'puzzle_n_sweep.json') or []
+    if sweep:
+        lines += [
+            '',
+            '## Puzzle candidate-count sweep (1M, h=5)',
+            '',
+            '| Method | N | success | nearest-data | diversity | path cost | top1-top2 margin |',
+            '| --- | ---: | ---: | ---: | ---: | ---: | ---: |',
+        ]
+        for row in sweep:
+            lines.append(
+                f"| {LABELS.get(row['method'], row['method'])} | {row['N']} | "
+                f"{pct(row['success'])} | {row['selected_nearest_data_distance']:.3f} | "
+                f"{row['candidate_diversity']:.3f} | {row['selected_path_cost']:.3f} | "
+                f"{row['top1_top2_path_cost_margin']:.3f} |"
+            )
+
     lines += [
         '',
         '## Scientific comparisons',
         '',
         '- CTD-W vs DTRL-W: future-occupancy discrimination beyond TRL.',
-        '- CTD-W vs CTD-U: PB-style proposer weighting and long-training coverage.',
-        '- CTD-PathNCE-W vs CTD-W: observed-intermediate ranking beyond FutureNCE.',
-        '- CTD-PathNCE-U vs CTD-U: the same PathNCE comparison with uniform proposer training.',
-        '- BridgeGeo rows are interpreted only after methods 1–6 complete.',
+        '- DTRL-W vs DTRL-U / CTD-W vs CTD-U: PB-style proposer weighting vs structured distance alone.',
+        '- PathNCE-W vs CTD-W: observed-intermediate ranking beyond FutureNCE, especially on puzzle.',
+        '- BridgeGeo deferred until high-level geometry/puzzle questions are resolved.',
         '',
-        'Conclusions must remain separated into geometry learning, proposal distribution, and explicit bridge execution.',
     ]
     (OUT / 'SUMMARY.md').write_text('\n'.join(lines) + '\n')
 

@@ -64,6 +64,8 @@ def diagnostics(agent, batch, reference_states) -> dict[str, float]:
     subgoal_to_goal = np.asarray(agent._metric_distance(subgoals, goals, name='value'))
     residual = via_subgoal + subgoal_to_goal - forward
     value_offsets = np.asarray(batch['value_offsets'], dtype=np.float32)
+    discount = float(agent.config['discount'])
+    value_d = np.power(discount, forward)
 
     h_np = np.asarray(h_state)
     p_np = np.asarray(p_state)
@@ -73,6 +75,9 @@ def diagnostics(agent, batch, reference_states) -> dict[str, float]:
         'distance/self_mean': float(same.mean()),
         'distance/self_max': float(same.max()),
         'distance/direct_mean': float(forward.mean()),
+        'distance/direct_median': float(np.median(forward)),
+        'distance/direct_p90': float(np.quantile(forward, 0.90)),
+        'distance/direct_p99': float(np.quantile(forward, 0.99)),
         'distance/temporal_mae': float(np.mean(np.abs(forward - value_offsets))),
         'distance/temporal_correlation': _correlation(forward, value_offsets),
         'distance/composed_mean': float((via_subgoal + subgoal_to_goal).mean()),
@@ -80,6 +85,10 @@ def diagnostics(agent, batch, reference_states) -> dict[str, float]:
         'distance/path_residual_std': float(residual.std()),
         'distance/path_residual_min': float(residual.min()),
         'distance/asymmetry_mean': float(np.mean(np.abs(forward - backward))),
+        'value/vd_mean': float(value_d.mean()),
+        'value/vd_median': float(np.median(value_d)),
+        'value/vd_p10': float(np.quantile(value_d, 0.10)),
+        'value/vd_p01': float(np.quantile(value_d, 0.01)),
         'representation/h_norm_mean': float(np.linalg.norm(h_np, axis=-1).mean()),
         'representation/p_norm_mean': float(np.linalg.norm(p_np, axis=-1).mean()),
         'representation/h_effective_rank': _effective_rank(h_np),
