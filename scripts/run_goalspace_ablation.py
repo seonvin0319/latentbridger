@@ -1,4 +1,4 @@
-"""Priority queue with one independent run per unoccupied physical GPU."""
+"""Priority queue with one local run per physical GPU and opt-in sharing."""
 from __future__ import annotations
 import argparse
 import csv
@@ -87,8 +87,9 @@ def gpu_inventory():
     return gpus,busy
 
 
-def available_gpus(gpus, busy, reserved):
-    return [g for g in gpus if g['uuid'] not in busy and g['uuid'] not in reserved and g['free_mib'] >= 8192]
+def available_gpus(gpus, busy, reserved, allow_shared=False):
+    return [g for g in gpus if (allow_shared or g['uuid'] not in busy)
+            and g['uuid'] not in reserved and g['free_mib'] >= 8192]
 
 
 def repository_trainers():
@@ -110,12 +111,13 @@ def summarize():
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--prepare-only',action='store_true')
+    parser.add_argument('--allow-shared-gpu',action='store_true',help='Allow external GPU workloads; still at most one local job per GPU and 8 GiB free at launch.')
     parser.add_argument('--poll-seconds',type=float,default=30)
     args=parser.parse_args()
     OUT.mkdir(parents=True,exist_ok=True)
     lock=(OUT/'queue.lock').open('w');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     jobs=plan(discover())
-    write_json(OUT/'queue.json',dict(base=BASE,jobs=jobs,steps=1_000_000,episodes=50,horizons=[5,2,1],max_parallel=3))
+    write_json(OUT/'queue.json',dict(base=BASE,jobs=jobs,steps=1_000_000,episodes=50,horizons=[5,2,1],max_parallel=3,allow_shared_gpu=args.allow_shared_gpu))
     if args.prepare_only:
         summarize();return
     existing=repository_trainers()
@@ -141,7 +143,7 @@ def main():
             if failed and not active:break
             gpus,busy=gpu_inventory()
             reserved={item['gpu'] for item in active.values()}
-            free=available_gpus(gpus,busy,reserved)
+            free=available_gpus(gpus,busy,reserved,args.allow_shared_gpu)
             if not failed:
                 for gpu in free:
                     if not pending or len(active)>=min(len(gpus),3):break
@@ -159,8 +161,8 @@ def main():
                     with (OUT/'launch_history.jsonl').open('a') as f:
                         f.write(json.dumps(dict(time=now(),pid=child.pid,gpu=gpu,job=job,argv=argv))+'\n')
                     print('launched',job,'pid',child.pid,'gpu',gpu['index'],flush=True)
-            state='failed' if failed else 'running' if active else 'waiting_for_dedicated_gpu' if pending else 'complete'
-            write_json(OUT/'queue_status.json',dict(time=now(),controller_pid=os.getpid(),status=state,
+            state='failed' if failed else 'running' if active else ('waiting_for_gpu_memory' if args.allow_shared_gpu else 'waiting_for_dedicated_gpu') if pending else 'complete'
+            write_json(OUT/'queue_status.json',dict(time=now(),controller_pid=os.getpid(),status=state,allow_shared_gpu=args.allow_shared_gpu,
                 active=[dict(job=r['job'],pid=r['process'].pid,gpu=r['gpu']) for r in active.values()],
                 pending=len(pending),completed=sum(completed(j) for j in jobs),failed=failed,gpus=gpus,busy_gpu_uuids=sorted(busy)))
             summarize()

@@ -36,3 +36,10 @@ def test_smoke_or_incomplete_evaluations_cannot_skip_full_run(tmp_path,monkeypat
         for h in (5,2,1):
             (run/f'evaluation_{step}_h{h}.json').write_text(json.dumps(dict(checkpoint=step,h=h,num_tasks=5,episodes_per_task=50,seed=0,variant='gs_trl_weighted')))
     assert completed(job)
+
+
+def test_opt_in_sharing_keeps_local_reservation_and_memory_gate():
+    gpu=dict(index=0,uuid='0',free_mib=31000)
+    assert available_gpus([gpu],{'0'},set(),allow_shared=True)==[gpu]
+    assert available_gpus([gpu],{'0'},{'0'},allow_shared=True)==[]
+    assert available_gpus([dict(gpu,free_mib=1000)],{'0'},set(),allow_shared=True)==[]
