@@ -34,6 +34,7 @@ from agents.pathbridger import (
 from utils.flax_utils import ModuleDict, TrainState
 from utils.goal_representation import (
     assert_phi_goal_obs_indices,
+    goal_representation,
     infer_phi_goal_obs_indices,
 )
 from utils.networks import MLP
@@ -48,6 +49,9 @@ VARIANTS = (
     'ctd_pathnce_weighted',
     'ctd_pathnce_uniform_bridgegeo',
     'ctd_pathnce_weighted_bridgegeo',
+    'gsdtrl_weighted',
+    'gsctd_learned_temp',
+    'gsctd_fixed',
 )
 
 
@@ -97,6 +101,11 @@ class TemporalQuasimetricValue(nn.Module):
     """One tied encoder, plus an NCE-only goal nuisance-bias head."""
 
     discount: float
+    env_name: str
+    metric_representation: str = 'full'
+    phi_goal_obs_indices: tuple[int, ...] = ()
+    initial_nce_alpha: float = 1.0
+    learn_nce_temperature: bool = False
     repr_dim: int = _REPR_DIM
 
     def setup(self):
@@ -108,10 +117,29 @@ class TemporalQuasimetricValue(nn.Module):
         self.h_head = nn.Dense(self.repr_dim, name='h')
         self.p_head = nn.Dense(self.repr_dim, name='p')
         self.nce_bias_head = nn.Dense(1, name='nce_bias')
+        if self.learn_nce_temperature:
+            initial_raw_alpha = jnp.log(jnp.expm1(jnp.asarray(self.initial_nce_alpha)))
+            self.raw_alpha = self.param(
+                'raw_alpha',
+                lambda _: initial_raw_alpha,
+            )
 
     def encode(self, states: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        hidden = self.trunk(states)
+        metric_inputs = goal_representation(
+            states,
+            self.metric_representation,
+            self.phi_goal_obs_indices,
+            env_name=self.env_name,
+        )
+        hidden = self.trunk(metric_inputs)
         return self.h_head(hidden), self.p_head(hidden)
+
+    def nce_alpha(self) -> jnp.ndarray:
+        """Return the learned global NCE scale with safety-only clipping."""
+
+        if not self.learn_nce_temperature:
+            return jnp.asarray(self.initial_nce_alpha, dtype=jnp.float32)
+        return jnp.clip(jax.nn.softplus(self.raw_alpha), 1e-3, 10.0)
 
     def distance(self, left: jnp.ndarray, right: jnp.ndarray) -> jnp.ndarray:
         h_left, p_left = self.encode(left)
@@ -144,6 +172,9 @@ class CTDModuleDict(ModuleDict):
 
     def metric_bias(self, goals, *, name: str):
         return self.modules[name].nuisance_bias(goals)
+
+    def metric_alpha(self, *, name: str):
+        return self.modules[name].nce_alpha()
 
 
 def pairwise_distance(
@@ -212,6 +243,13 @@ class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
             method='metric_bias',
         )
 
+    def _metric_alpha(self, *, name: str = 'value', params=None):
+        return self.network(
+            name=name,
+            params=params,
+            method='metric_alpha',
+        )
+
     def nce_loss(
         self,
         batch: dict[str, jnp.ndarray],
@@ -232,11 +270,16 @@ class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
             params=grad_params,
         )
         distance = pairwise_distance(h_state, p_state, h_goal, p_goal)
-        temperature = jnp.asarray(
-            self.config['contrastive_temperature'],
-            dtype=distance.dtype,
-        )
-        geometry = -distance / temperature
+        if self.config['nce_temperature_mode'] == 'learned':
+            alpha = self._metric_alpha(params=grad_params).astype(distance.dtype)
+        else:
+            temperature = jnp.asarray(
+                self.config['contrastive_temperature'],
+                dtype=distance.dtype,
+            )
+            alpha = 1.0 / temperature
+        effective_temperature = 1.0 / alpha
+        geometry = -alpha * distance
         bias = self._metric_bias(goals, params=grad_params)
         logits = geometry + bias[None, :]
         positive = jnp.diag(logits)
@@ -250,7 +293,9 @@ class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
             'nce/recall_at_1': (rank == 1).mean(),
             'nce/recall_at_5': (rank <= 5).mean(),
             'nce/positive_rank': rank.mean(),
-            'nce/temperature': temperature,
+            'nce/alpha': alpha,
+            'nce/temperature': effective_temperature,
+            'nce/effective_temperature': effective_temperature,
             'nce/bias_mean': bias.mean(),
             'nce/bias_std': bias.std(),
             'nce/geometry_mean': geometry.mean(),
@@ -556,6 +601,12 @@ class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
         horizon = int(config['horizon'])
         if float(config.get('contrastive_temperature', horizon)) <= 0.0:
             raise ValueError('contrastive_temperature must be positive.')
+        metric_representation = str(config.get('metric_representation', 'full')).lower()
+        if metric_representation not in ('full', 'phi'):
+            raise ValueError("metric_representation must be 'full' or 'phi'.")
+        nce_temperature_mode = str(config.get('nce_temperature_mode', 'fixed')).lower()
+        if nce_temperature_mode not in ('fixed', 'learned'):
+            raise ValueError("nce_temperature_mode must be 'fixed' or 'learned'.")
         endpoint_distribution = str(config['endpoint_distribution']).lower()
         if endpoint_distribution not in ('flow', 'gaussian'):
             raise ValueError(
@@ -564,6 +615,8 @@ class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
             )
         config['endpoint_distribution'] = endpoint_distribution
         config['variant'] = variant
+        config['metric_representation'] = metric_representation
+        config['nce_temperature_mode'] = nce_temperature_mode
         if horizon < _ACTION_HORIZON:
             raise ValueError(f'horizon must be at least {_ACTION_HORIZON}, got {horizon}.')
         discount = float(config['discount'])
@@ -589,8 +642,16 @@ class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
             where='ContrastiveTransitiveDistanceAgent.create',
             env_name=env_name,
         )
-        value_def = TemporalQuasimetricValue(discount=discount)
-        target_value_def = TemporalQuasimetricValue(discount=discount)
+        metric_kwargs = dict(
+            discount=discount,
+            env_name=env_name,
+            metric_representation=metric_representation,
+            phi_goal_obs_indices=phi_goal_obs_indices,
+            initial_nce_alpha=1.0 / horizon,
+            learn_nce_temperature=nce_temperature_mode == 'learned',
+        )
+        value_def = TemporalQuasimetricValue(**metric_kwargs)
+        target_value_def = TemporalQuasimetricValue(**metric_kwargs)
         if endpoint_distribution == 'gaussian':
             endpoint_def = GaussianEndpointProposer(
                 state_dim=state_dim,

@@ -1,0 +1,73 @@
+{
+  "record_version": 1,
+  "claim_id": "goalspace-puzzle-learned-temp-smoke-20261008",
+  "repository": {
+    "base_commit": "141e2cedc2af3b27c25c09a7e048d2abc966c837",
+    "dirty": true,
+    "source_hashes": {
+      "agents/contrastive_transitive_distance_pathbridger.py": "4da654a2218e6a396792caba8df7fa0873c3226474a677e893bc9c287bfbf44a",
+      "main_ctd_pathbridger.py": "8eafe45ce0a7210244d4f2239ba2d04dc9762d8f52f73549b28d53a4bf0df802",
+      "configs/gsctd/common.py": "1f4130ca1ef1fb9702efba552ad25ac963cf78b32e701ae8e45d34bc9d51a44e",
+      "configs/gsctd/puzzle_3x3.py": "3cffc3c2e53695018d7b4e41a78ad8910f9319e034145e17c0fe81930dbd6d85",
+      "utils/goal_representation.py": "5a6454baf58532b778547dd22641211009e8d00780f51100906a67dfefae3f5a"
+    }
+  },
+  "command": "JAX_PLATFORMS=cpu .venv/bin/python main_ctd_pathbridger.py --env puzzle_3x3 --variant gsctd_learned_temp --seed 0 --steps 1 --batch-size 8 --episodes 1 --smoke --dataset_dir /home/choi/.ogbench/data --run-dir exp/goalspace_transitive_distance/smoke_final/puzzle_3x3/gsctd_learned_temp/seed0",
+  "environment": {
+    "python": "3.11.17",
+    "packages": {
+      "jax": "0.6.2",
+      "flax": "0.10.6",
+      "optax": "0.2.5",
+      "mujoco": "3.12.0",
+      "ogbench": "1.1.0",
+      "gymnasium": "1.4.0"
+    },
+    "hardware": "Linux 6.14.0-37-generic x86_64; JAX device TFRT_CPU_0"
+  },
+  "computation": {
+    "assertion_tested": "The gsctd_learned_temp puzzle path executes one update and completes checkpoint round-trip, diagnostics, and one rollout per each of five tasks with finite outputs.",
+    "inputs": {
+      "/home/choi/.ogbench/data/puzzle-3x3-play-v0.npz": "bca9b1775ea5c01af5ac3f9b652709d341bddd17fe4b6368056566ac3c5fbb0f",
+      "/home/choi/.ogbench/data/puzzle-3x3-play-v0-val.npz": "897a3f491decf46d72ea73425dc9b2c969530eca190708d763e632850b856550"
+    },
+    "bounds": {
+      "training_updates": 1,
+      "batch_size": 8,
+      "tasks": 5,
+      "episodes_per_task": 1,
+      "execute_h": 5,
+      "candidates": 32,
+      "seed": 0
+    },
+    "non_claims": [
+      "This is not evidence of rollout performance.",
+      "This does not answer any of Q1-Q4.",
+      "This does not substitute for the five required 1M runs or the puzzle candidate-N sweep."
+    ]
+  },
+  "run": {
+    "completed_at": "2026-10-08T11:14:10.170186738+09:00",
+    "runtime_seconds": 22.28800654411316,
+    "exit_status": 0,
+    "result": "Execution plumbing verified; alpha after one update was 0.040011756122112274 and effective temperature was 24.99265480041504."
+  },
+  "outputs": {
+    "complete.json": "aed84212e924c210877d85f7d32089a032933aac3c9e5ac3c79b7e1dfe3c2b6f",
+    "diagnostics_1.json": "bed58db3e653990d3968e9f9990c273c53a08969bc82d53f155ffaf072ed6c64",
+    "smoke_evaluation.json": "33a01f44a7642ae112658c4190192d2edf7baa5937a0751dfa9e11415958ed1a",
+    "train.jsonl": "ced2f1b617dc6bb451830cf693edbad74278686f9a5d087bfb3df5dbc69bf06f",
+    "checkpoints/params_1.pkl": "f572863d492128331b02401e0bb6ee0e718cb00c9b39404a484c173b9870caf8"
+  },
+  "checks": [
+    "All logged training and diagnostic values were finite.",
+    "Triangle max violation was 0.0.",
+    "Checkpoint restore matched every PyTree leaf exactly.",
+    "The five-task smoke evaluation returned normally."
+  ],
+  "residual_risks": [
+    "The run used an uncommitted working tree pinned by source hashes.",
+    "Raw smoke artifacts are gitignored and must be regenerated with the recorded command.",
+    "No accelerator was available for the required long runs."
+  ]
+}
