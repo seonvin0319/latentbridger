@@ -77,6 +77,10 @@ def _evaluate_episode(
     temperature: float,
     rng,
     execute_h: int = 5,
+    rng_mode: str = "stream",
+    base_seed: int = 0,
+    task_id: int = 0,
+    episode_index: int = 0,
 ) -> tuple[bool, Any]:
     observation = np.asarray(observation, dtype=np.float32).reshape(-1)
     goal = np.asarray(goal, dtype=np.float32).reshape(-1)
@@ -84,9 +88,19 @@ def _evaluate_episode(
     terminated = False
     truncated = False
     step = 0
+    replan = 0
 
     while step < max_episode_steps and not (terminated or truncated):
-        rng, sample_seed = jax.random.split(rng)
+        if rng_mode == "per_episode":
+            sample_seed = jax.random.PRNGKey(int(base_seed))
+            sample_seed = jax.random.fold_in(sample_seed, int(task_id))
+            sample_seed = jax.random.fold_in(sample_seed, int(episode_index))
+            sample_seed = jax.random.fold_in(sample_seed, replan)
+        elif rng_mode == "stream":
+            rng, sample_seed = jax.random.split(rng)
+        else:
+            raise ValueError("rng_mode must be 'stream' or 'per_episode'")
+        replan += 1
         action_chunk = _sample_action_chunk(
             agent,
             observation,
@@ -120,6 +134,7 @@ def evaluate(
     temperature: float = 1.0,
     seed: int = 0,
     execute_h: int = 5,
+    rng_mode: str = "stream",
 ) -> dict[str, float | int]:
     """Evaluate PathBridger on OGBench tasks using five-step IDM chunks.
 
@@ -129,6 +144,8 @@ def evaluate(
     """
     if execute_h not in (1, 2, 5):
         raise ValueError('execute_h must be 1, 2 or 5')
+    if rng_mode not in ('stream', 'per_episode'):
+        raise ValueError("rng_mode must be 'stream' or 'per_episode'")
     task_ids = tuple(int(task_id) for task_id in task_ids)
     if not task_ids:
         raise ValueError('task_ids must contain at least one task.')
@@ -165,6 +182,10 @@ def evaluate(
                 temperature=float(temperature),
                 rng=rng,
                 execute_h=execute_h,
+                rng_mode=rng_mode,
+                base_seed=int(seed),
+                task_id=task_id,
+                episode_index=episode,
             )
             successes.append(float(success))
 
@@ -180,6 +201,7 @@ def evaluate(
     metrics['overall_success'] = float(np.mean(task_success_rates))
     metrics['num_tasks'] = len(task_ids)
     metrics['episodes_per_task'] = int(episodes_per_task)
+    metrics['rng_mode'] = rng_mode
     return metrics
 
 

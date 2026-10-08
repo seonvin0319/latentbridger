@@ -39,7 +39,7 @@ def write_json(path, payload):
 def config_for(env, variant):
     path = Path(env)
     name = path.stem if path.suffix == '.py' else env
-    if name not in ('cube_single', 'cube_double', 'puzzle_3x3', 'antmaze_medium'):
+    if name not in ('cube_single', 'cube_double', 'puzzle_3x3', 'antmaze_medium', 'antmaze_large', 'humanoid_medium', 'humanoid_large'):
         raise ValueError(f'Unknown CPB config: {env}')
     config = importlib.import_module('configs.cpb.' + name).get_config()
     config.variant = variant

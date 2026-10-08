@@ -10,7 +10,7 @@ import sys
 import time
 
 ROOT=Path(__file__).resolve().parents[1]
-ENVS=('cube_single','cube_double','antmaze_medium','puzzle_3x3')
+ENVS=('cube_single','cube_double','antmaze_medium','antmaze_large','puzzle_3x3','humanoid_medium','humanoid_large')
 DEFAULT_ENVS=('cube_double','antmaze_medium','puzzle_3x3')
 
 

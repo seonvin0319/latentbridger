@@ -20,6 +20,8 @@ def aggregate(root):
     evaluations,diagnostics,curves=[],[],[]
     for path in sorted(root.glob('*/*/seed*/evaluation_[0-9]*_h*.json')):
         d=json.loads(path.read_text())
+        if d.get('deferred') or 'overall_success' not in d:
+            continue
         evaluations.append(dict(env=d['env'],variant=d['variant'],seed=d['seed'],checkpoint=d['checkpoint'],h=d['h'],
             success=d['overall_success'],success_count=d['success_count'],N=d['N'],temperature=d['temperature']))
     for path in sorted(root.glob('*/*/seed*/diagnostics_*.json')):
