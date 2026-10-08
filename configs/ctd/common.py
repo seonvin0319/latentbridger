@@ -40,5 +40,7 @@ def with_variant(config, variant='ctd_weighted'):
     config.variant = variant
     # tau_C is the local bridge horizon. tau_path stays 5. Do not tune either.
     config.contrastive_temperature = float(config.horizon)
+    config.metric_representation = 'full'
+    config.nce_temperature_mode = 'fixed'
     config.tau_path = 5.0
     return config

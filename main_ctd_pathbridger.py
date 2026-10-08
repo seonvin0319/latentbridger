@@ -49,7 +49,8 @@ def config_for(env, variant):
         raise ValueError(f'Unknown CTD config: {env}')
     if variant not in VARIANTS:
         raise ValueError(f'Unknown CTD variant: {variant}')
-    return importlib.import_module('configs.ctd.' + name).get_config(variant)
+    family = 'gsctd' if variant.startswith('gs') else 'ctd'
+    return importlib.import_module(f'configs.{family}.' + name).get_config(variant)
 
 
 def latest_checkpoint(run_dir):
@@ -192,7 +193,12 @@ def run(args):
                     )
                     result.update(
                         env=config.env_name, variant=args.variant, seed=args.seed,
-                        checkpoint=step, method='ctd_pathbridger',
+                        checkpoint=step,
+                        method=(
+                            'goalspace_transitive_distance'
+                            if args.variant.startswith('gs')
+                            else 'ctd_pathbridger'
+                        ),
                     )
                     write_json(path, result)
             return agent
