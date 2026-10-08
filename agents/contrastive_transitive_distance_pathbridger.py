@@ -23,6 +23,7 @@ from agents.pathbridger import (
     GaussianEndpointProposer,
     InverseDynamics,
     PathBridgerAgent,
+    ScalarTransitiveValue,
     _ACTION_HORIZON,
     _ENDPOINT_WEIGHT_CAP,
     _HIDDEN_DIMS,
@@ -50,6 +51,10 @@ VARIANTS = (
     'ctd_pathnce_uniform_bridgegeo',
     'ctd_pathnce_weighted_bridgegeo',
     'gsdtrl_weighted',
+    'gs_trl_weighted',
+    'gsdtrl_uniform',
+    'gsdtrl_no_transitive_weighted',
+    'gs_symmetric_weighted',
     'gsctd_learned_temp',
     'gsctd_fixed',
 )
@@ -161,6 +166,35 @@ class TemporalQuasimetricValue(nn.Module):
         return logits_from_distance(distance, self.discount) + 0.0 * nuisance
 
 
+class GoalSpaceScalarValue(ScalarTransitiveValue):
+    """Original PB scalar MLP, receiving only phi(s), phi(g)."""
+
+    env_name: str = ''
+
+    @nn.compact
+    def __call__(self, observations, goals):
+        return super().__call__(
+            goal_representation(observations, 'phi', env_name=self.env_name),
+            goal_representation(goals, 'phi', env_name=self.env_name),
+        )
+
+
+class GoalSpaceSymmetricValue(TemporalQuasimetricValue):
+    """Tied phi encoder with exact L2 distance and no potential parameters."""
+
+    def setup(self):
+        self.trunk = MLP(tuple(_HIDDEN_DIMS), activate_final=True, layer_norm=_LAYER_NORM)
+        self.h_head = nn.Dense(self.repr_dim, name='h')
+
+    def encode(self, states):
+        hidden = self.trunk(goal_representation(states, 'phi', env_name=self.env_name))
+        h = self.h_head(hidden)
+        return h, jnp.zeros_like(h)
+
+    def __call__(self, observations, goals):
+        return logits_from_distance(self.distance(observations, goals), self.discount)
+
+
 class CTDModuleDict(ModuleDict):
     """ModuleDict plus direct distance and encoder calls for the metric."""
 
@@ -217,6 +251,35 @@ def path_candidate_positive_mask(
 
 class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
     """PathBridger whose value is a temporal quasimetric."""
+
+    def value_loss(self, batch, grad_params):
+        if self.config['variant'] != 'gsdtrl_no_transitive_weighted':
+            return super().value_loss(batch, grad_params)
+        # Do not evaluate long-range constituents: they cannot enter either
+        # the loss or its gradient. Keep the original PB self/base semantics.
+        observations = batch['observations']
+        logits = self.network.select('value')(
+            jnp.concatenate([observations, observations]),
+            jnp.concatenate([observations, batch['base_goals']]),
+            params=grad_params,
+        )
+        self_logits, base_logits = jnp.split(logits, 2)
+        self_loss = optax.sigmoid_binary_cross_entropy(self_logits, jnp.ones_like(self_logits)).mean()
+        targets = jnp.power(self.config['discount'], jnp.asarray(batch['base_offsets'], jnp.float32))
+        weights = jnp.ones_like(targets)
+        if float(self.config['value_distance_weight_power']) != 0.0:
+            target_logits = self.network.select('target_value')(observations, batch['base_goals'])
+            weights, _ = self._distance_weight_from_values(jax.nn.sigmoid(target_logits))
+        base_loss = (weights * optax.sigmoid_binary_cross_entropy(base_logits, targets)).mean()
+        loss = self_loss + base_loss
+        return loss, {
+            'value/loss': loss, 'value/self_loss': self_loss,
+            'value/base_loss': base_loss, 'value/transitive_loss': jnp.zeros(()),
+            'value/self_mean': jax.nn.sigmoid(self_logits).mean(),
+            'value/base_mean': jax.nn.sigmoid(base_logits).mean(),
+            'value/base_target_mean': targets.mean(),
+            'value/base_distance_weight_mean': weights.mean(),
+        }
 
     def _metric_distance(self, left, right, *, name: str, params=None):
         return self.network(
@@ -501,6 +564,10 @@ class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
     ) -> jnp.ndarray:
         """Sample endpoints, rank by ``d(s,z)+d(z,g)``, and decode with the IDM."""
 
+        if self.config['variant'] == 'gs_trl_weighted':
+            return PathBridgerAgent.sample_action_chunks(
+                self, observations, goals, seed, num_candidates, temperature,
+            )
         if seed is None:
             seed = jax.random.PRNGKey(0)
         if num_candidates is None:
@@ -650,8 +717,13 @@ class ContrastiveTransitiveDistanceAgent(PathBridgerAgent):
             initial_nce_alpha=1.0 / horizon,
             learn_nce_temperature=nce_temperature_mode == 'learned',
         )
-        value_def = TemporalQuasimetricValue(**metric_kwargs)
-        target_value_def = TemporalQuasimetricValue(**metric_kwargs)
+        if variant == 'gs_trl_weighted':
+            value_def = GoalSpaceScalarValue(env_name=env_name)
+            target_value_def = GoalSpaceScalarValue(env_name=env_name)
+        else:
+            value_cls = GoalSpaceSymmetricValue if variant == 'gs_symmetric_weighted' else TemporalQuasimetricValue
+            value_def = value_cls(**metric_kwargs)
+            target_value_def = value_cls(**metric_kwargs)
         if endpoint_distribution == 'gaussian':
             endpoint_def = GaussianEndpointProposer(
                 state_dim=state_dim,

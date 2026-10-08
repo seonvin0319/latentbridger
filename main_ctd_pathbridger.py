@@ -30,7 +30,8 @@ from utils.contrastive_pathbridger_evaluation import evaluate
 
 CHECKPOINTS = (100000, 300000, 500000, 800000, 1000000)
 EXECUTE_H = (5, 2, 1)
-ENVS = ('cube_single', 'cube_double', 'puzzle_3x3', 'antmaze_medium')
+ENVS = ('cube_single', 'cube_double', 'puzzle_3x3', 'antmaze_medium',
+        'puzzle_4x4', 'cube_triple', 'antmaze_large', 'scene')
 DIAGNOSTIC_SEED = 92831
 DIAGNOSTIC_PAIRS = 1024
 
@@ -167,7 +168,7 @@ def run(args):
             diag_path = run_dir / f'diagnostics_{step}.json'
             if not diag_path.exists():
                 diag = diagnostics(agent, diagnostic, diagnostic['reference_states'])
-                if diag['triangle/max_violation'] > 1e-3:
+                if diag.get('triangle/max_violation', 0.0) > 1e-3:
                     raise RuntimeError(f'Triangle violation {diag["triangle/max_violation"]} at step {step}')
                 if not all(np.isfinite(value) for value in diag.values()):
                     raise FloatingPointError(f'Nonfinite diagnostic at step {step}')
@@ -201,6 +202,11 @@ def run(args):
                         ),
                     )
                     write_json(path, result)
+            if 'goalspace_ablation' in run_dir.parts:
+                subprocess.run(
+                    [os.sys.executable, str(Path(__file__).resolve().parent / 'scripts/summarize_goalspace_ablation.py')],
+                    check=True,
+                )
             return agent
         finally:
             np.random.set_state(state)

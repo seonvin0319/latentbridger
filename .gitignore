@@ -8,3 +8,5 @@ build/
 dist/
 exp/
 wandb/
+checkpoints/
+datasets/
