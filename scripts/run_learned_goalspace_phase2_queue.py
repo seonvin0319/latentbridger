@@ -36,13 +36,15 @@ METHOD_VARIANT = {
     'RANDOM16_GS_TRL_W': 'random16',
     'MH_LGS_TRL_W_FROZEN': MH_VARIANT,
 }
-# Gate: only auto-start MH downstream if button_exact_state_accuracy exceeds this.
-MH_EXACT_ACC_THRESHOLD = 0.05
+# Predetermined representation checkpoint for every frozen downstream transfer.
+PREDECLARED_PRETRAIN_STEP = 500_000
 
+# Scientific order: fit PCA → PCA downstream → fit Random → Random downstream →
+# MH pretrain → diagnostic probes → MH downstream unconditionally (no oracle gate).
 PHASE2_ORDER = (
     ('fixed', 'pca16'),
-    ('fixed', 'random16'),
     ('downstream', 'PCA16_GS_TRL_W'),
+    ('fixed', 'random16'),
     ('downstream', 'RANDOM16_GS_TRL_W'),
     ('pretrain_mh', ''),
     ('probes_mh', ''),
@@ -183,7 +185,9 @@ def probes_complete(directory: Path, checkpoints: tuple[int, ...], variant: str)
     return True
 
 
-def _learned_exact_acc(probe_dir: Path, checkpoint: int) -> float | None:
+def _probe_metric(probe_dir: Path, checkpoint: int, metric: str) -> float | None:
+    """Read a diagnostic probe scalar. Never used for run/stop selection."""
+
     path = probe_dir / 'probe_metrics.csv'
     try:
         with path.open(newline='') as file:
@@ -194,27 +198,12 @@ def _learned_exact_acc(probe_dir: Path, checkpoint: int) -> float | None:
         float(row['value'])
         for row in rows
         if row.get('representation') == 'learned_E'
-        and row.get('metric') == 'button_exact_state_accuracy'
+        and row.get('metric') == metric
         and int(row.get('checkpoint', -1)) == checkpoint
     ]
     if not values:
         return None
     return float(values[-1])
-
-
-def mh_downstream_allowed(probe_dir: Path, checkpoint: int, *, force: bool, gate_file: Path | None) -> tuple[bool, str]:
-    if force:
-        return True, 'forced via --force-mh-downstream'
-    if gate_file is not None and gate_file.is_file():
-        return True, f'gate file present: {gate_file}'
-    exact = _learned_exact_acc(probe_dir, checkpoint)
-    if exact is not None and exact > MH_EXACT_ACC_THRESHOLD:
-        return True, f'learned_E button_exact_state_accuracy={exact:.4f} > {MH_EXACT_ACC_THRESHOLD}'
-    reason = (
-        f'skip MH downstream: exact_acc={exact!r} (need > {MH_EXACT_ACC_THRESHOLD}), '
-        'no gate file, and --force-mh-downstream not set'
-    )
-    return False, reason
 
 
 def _run(command: list[str], args, env) -> None:
@@ -262,13 +251,17 @@ def run(args) -> None:
         (base / 'PHASE2_COMPLETE').unlink(missing_ok=True)
 
     archival_steps = args.smoke_downstream_steps if args.smoke else 1_000_000
-    pretrain_steps = args.smoke_pretrain_steps if args.smoke else 500_000
+    pretrain_steps = args.smoke_pretrain_steps if args.smoke else PREDECLARED_PRETRAIN_STEP
+    if not args.smoke and pretrain_steps != PREDECLARED_PRETRAIN_STEP:
+        raise ValueError(
+            f'Production phase-2 must use predetermined pretrain step '
+            f'{PREDECLARED_PRETRAIN_STEP}, got {pretrain_steps}.'
+        )
     downstream_steps = args.smoke_downstream_steps if args.smoke else 1_000_000
     probe_steps = (pretrain_steps,) if args.smoke else (100_000, 300_000, 500_000)
     evaluation_episodes = args.smoke_episodes if args.smoke else 50
     child_env = child_environment(args.gpu)
     python = sys.executable
-    gate_file = Path(args.mh_gate_file) if args.mh_gate_file else base / 'multihorizon' / 'ALLOW_MH_DOWNSTREAM'
 
     _run(
         [
@@ -433,16 +426,23 @@ def run(args) -> None:
                 )
             if not args.dry_run and not probes_complete(probe_dir, probe_steps, MH_VARIANT):
                 raise RuntimeError(f'Multihorizon probes incomplete: {probe_dir}')
-            exact = _learned_exact_acc(probe_dir, pretrain_steps)
+            # Diagnostic-only snapshot. Never used for run/stop or checkpoint choice.
             summary = {
                 'env': ENV,
                 'variant': MH_VARIANT,
                 'checkpoint': pretrain_steps,
-                'button_exact_state_accuracy': exact,
-                'mh_exact_acc_threshold': MH_EXACT_ACC_THRESHOLD,
+                'button_accuracy_mean': _probe_metric(probe_dir, pretrain_steps, 'button_accuracy_mean'),
+                'button_exact_state_accuracy': _probe_metric(probe_dir, pretrain_steps, 'button_exact_state_accuracy'),
+                'nuisance_r2': _probe_metric(probe_dir, pretrain_steps, 'nuisance_r2'),
+                'nearest_neighbor_purity': _probe_metric(probe_dir, pretrain_steps, 'nearest_neighbor_purity'),
+                'nearest_neighbor_exact_purity': _probe_metric(
+                    probe_dir, pretrain_steps, 'nearest_neighbor_exact_purity'
+                ),
                 'note': (
-                    'MH_LGS_TRL_W_FROZEN starts only if --force-mh-downstream, '
-                    f'gate file {gate_file}, or exact_acc > {MH_EXACT_ACC_THRESHOLD}.'
+                    'Oracle task features are used only for post-hoc '
+                    'representation diagnostics and never affect training '
+                    'or experimental selection. MH_LGS_TRL_W_FROZEN always '
+                    f'uses predetermined pretrain step {PREDECLARED_PRETRAIN_STEP}.'
                 ),
             }
             if not args.dry_run:
@@ -452,20 +452,11 @@ def run(args) -> None:
 
         if kind == 'downstream_mh':
             method = name
-            allowed, reason = mh_downstream_allowed(
-                mh_probe_dir(base),
-                pretrain_steps,
-                force=args.force_mh_downstream,
-                gate_file=gate_file,
+            print(
+                'MH_LGS_TRL_W_FROZEN runs unconditionally after successful '
+                f'MH pretrain+probes (predeclared step {pretrain_steps}).',
+                flush=True,
             )
-            print(reason, flush=True)
-            if not allowed:
-                if not args.dry_run:
-                    _write_json(
-                        base / 'multihorizon' / 'mh_downstream_skipped.json',
-                        {'reason': reason, 'threshold': MH_EXACT_ACC_THRESHOLD},
-                    )
-                continue
             run_dir = downstream_dir(base, ENV, method)
             if downstream_complete(
                 base,
@@ -535,16 +526,6 @@ def parser() -> argparse.ArgumentParser:
         '--wait-for-archival',
         action='store_true',
         help='Error instead of soft-exit when archival LGS is incomplete.',
-    )
-    result.add_argument(
-        '--force-mh-downstream',
-        action='store_true',
-        help='Start MH_LGS_TRL_W_FROZEN even if probe exact-acc gate fails.',
-    )
-    result.add_argument(
-        '--mh-gate-file',
-        default='',
-        help='Optional path; if present, allows MH downstream (default: <base>/multihorizon/ALLOW_MH_DOWNSTREAM).',
     )
     return result
 

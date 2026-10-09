@@ -1,8 +1,9 @@
 # Prep: `fullobs_multihorizon_nce`
 
-Status: **prepared, not launched**.
+Status: **implemented on `learned-goalspace-multihorizon`; launches after archival LGS 1M**.
 Trigger: Case C from `LEARNED_PHI_DIAG_300K.md` (puzzle LGS-TRL-W 300k h5 = 22.4%).
 Constraint: do not kill the live `fullobs_future_nce` → LGS-TRL-W 1M queue.
+Oracle probes are diagnostic only — MH downstream is **unconditional** after successful 500k pretrain.
 
 ## Spec (locked by parent plan)
 

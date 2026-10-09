@@ -504,12 +504,20 @@ def test_multihorizon_update_and_checkpoint_roundtrip(tmp_path):
         np.testing.assert_array_equal(left, right)
 
 
-def test_phase2_queue_script_gates_mh_downstream():
+def test_phase2_queue_has_no_oracle_run_gate_and_correct_order():
     source = (Path(__file__).parents[1] / 'scripts' / 'run_learned_goalspace_phase2_queue.py').read_text()
-    assert 'MH_EXACT_ACC_THRESHOLD = 0.05' in source
-    assert '--force-mh-downstream' in source
-    assert 'ALLOW_MH_DOWNSTREAM' in source
-    assert 'PCA16_GS_TRL_W' in source
+    assert 'MH_EXACT_ACC_THRESHOLD' not in source
+    assert '--force-mh-downstream' not in source
+    assert 'ALLOW_MH_DOWNSTREAM' not in source
+    assert 'PREDECLARED_PRETRAIN_STEP = 500_000' in source
+    assert 'unconditionally' in source
+    assert "('fixed', 'pca16')" in source
+    assert "('downstream', 'PCA16_GS_TRL_W')" in source
+    # PCA fit must precede PCA downstream; Random fit precedes Random downstream.
+    assert source.index("('fixed', 'pca16')") < source.index("('downstream', 'PCA16_GS_TRL_W')")
+    assert source.index("('downstream', 'PCA16_GS_TRL_W')") < source.index("('fixed', 'random16')")
+    assert source.index("('fixed', 'random16')") < source.index("('downstream', 'RANDOM16_GS_TRL_W')")
+    assert source.index("('probes_mh', '')") < source.index("('downstream_mh', 'MH_LGS_TRL_W_FROZEN')")
     wrapper = (Path(__file__).parents[1] / 'scripts' / 'run_learned_goalspace_phase2_16g.sh').read_text()
     assert 'run_learned_goalspace_phase2_queue.py' in wrapper
     assert 'run_learned_goalspace_queue.py' not in wrapper

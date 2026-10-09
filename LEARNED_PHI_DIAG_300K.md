@@ -1,10 +1,13 @@
 # Learned φ diagnosis at puzzle LGS-TRL-W 300k
 
-Updated: **2026-10-10 00:35 KST**
+Updated: **2026-10-10 00:56 KST**
 Host: svcho
 Live run: **not killed** — `LGS_TRL_W_FROZEN` / puzzle-3x3 / seed0 continues past 300k toward 1M.
 Primary method name: **LGS-TRL-W** (LGSDTRL remains secondary).
 Off2Online GPU: **not started**.
+
+Oracle task features are used only for post-hoc representation diagnostics
+and never affect training or experimental selection.
 
 Frozen encoder under test: pretrain `fullobs_future_nce` **500k** checkpoint
 `exp/learned_goalspace/pretrain/puzzle_3x3/fullobs_future_nce/seed0/checkpoints/params_500000.pkl`
@@ -30,8 +33,10 @@ Oracle GS-TRL / GSDTRL puzzle references (~97–98% at 1M) remain far above this
 \]
 
 - Keep the current frozen LGS-TRL-W run to **1M** (no kill).
-- Mark primary `fullobs_future_nce` as **likely insufficient** for oracle-like goal abstraction.
-- Prepare the predefined representation ablation: **`fullobs_multihorizon_nce`**.
+- Mark primary `fullobs_future_nce` as **likely insufficient** for oracle-like goal abstraction
+  (over-invariance: low nuisance R² with near-zero task exact accuracy — **not** latent collapse).
+- Run phase-2: PCA → Random → MH pretrain → MH downstream **unconditionally**
+  (no oracle probe gate; predetermined encoder checkpoint 500k).
 - Do **not** start Off2Online GPU work yet.
 
 ---
