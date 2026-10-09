@@ -10,25 +10,32 @@ import numpy as np
 from configs.gsctd.cube_double import get_config as cube_config
 from configs.gsctd.puzzle_3x3 import get_config as puzzle_config
 from envs.env_utils import make_env_and_datasets
-from learned_goalspace.pretrain import VARIANT
+from learned_goalspace.multihorizon import VARIANT as MULTIHORIZON_VARIANT
+from learned_goalspace.pretrain import VARIANT as FUTURE_VARIANT
 from learned_goalspace.probes import run_checkpoint_probes, write_metric_csv
 
 CONFIGS = {'puzzle_3x3': puzzle_config, 'cube_double': cube_config}
 CHECKPOINTS = (100_000, 300_000, 500_000)
+VARIANTS = (FUTURE_VARIANT, MULTIHORIZON_VARIANT)
+
+
+def default_pretrain_dir(env: str, variant: str, seed: int) -> Path:
+    if variant == MULTIHORIZON_VARIANT:
+        return Path('exp/learned_goalspace/multihorizon/pretrain') / env / variant / f'seed{seed}'
+    return Path('exp/learned_goalspace/pretrain') / env / variant / f'seed{seed}'
+
+
+def default_probe_dir(env: str, variant: str, seed: int) -> Path:
+    if variant == MULTIHORIZON_VARIANT:
+        return Path('exp/learned_goalspace/multihorizon/probes') / env / variant / f'seed{seed}'
+    return Path('exp/learned_goalspace/probes') / env / variant / f'seed{seed}'
 
 
 def run(args) -> None:
+    variant = args.variant
     config = CONFIGS[args.env]('gsdtrl_weighted')
-    pretrain_dir = (
-        Path(args.pretrain_dir)
-        if args.pretrain_dir
-        else Path('exp/learned_goalspace/pretrain') / args.env / VARIANT / f'seed{args.seed}'
-    )
-    output_dir = (
-        Path(args.output_dir)
-        if args.output_dir
-        else Path('exp/learned_goalspace/probes') / args.env / VARIANT / f'seed{args.seed}'
-    )
+    pretrain_dir = Path(args.pretrain_dir) if args.pretrain_dir else default_pretrain_dir(args.env, variant, args.seed)
+    output_dir = Path(args.output_dir) if args.output_dir else default_probe_dir(args.env, variant, args.seed)
     env, _, validation = make_env_and_datasets(config.env_name, dataset_dir=args.dataset_dir or None)
     try:
         observations = np.asarray(validation['observations'], dtype=np.float32)
@@ -46,10 +53,11 @@ def run(args) -> None:
                 step=step,
                 env_name=config.env_name,
                 observations=observations,
+                expected_variant=variant,
             )
             context = {
                 'env': config.env_name,
-                'variant': VARIANT,
+                'variant': variant,
                 'seed': args.seed,
             }
             representation_rows.extend(context | row for row in representations)
@@ -63,6 +71,7 @@ def run(args) -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     result.add_argument('--env', choices=tuple(CONFIGS), required=True)
+    result.add_argument('--variant', choices=VARIANTS, default=FUTURE_VARIANT)
     result.add_argument('--seed', type=int, default=0)
     result.add_argument('--dataset-dir', default='')
     result.add_argument('--pretrain-dir', default='')

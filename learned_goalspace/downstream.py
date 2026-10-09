@@ -27,6 +27,7 @@ from agents.pathbridger import (
     _LEARNING_RATE,
     _replace_module_params,
 )
+from learned_goalspace.fixed_representations import FixedLinearEncoder
 from learned_goalspace.pretrain import GoalEncoder, LATENT_DIM
 from utils.flax_utils import ModuleDict, TrainState
 from utils.goal_representation import (
@@ -35,7 +36,20 @@ from utils.goal_representation import (
 )
 from utils.networks import MLP
 
-METHODS = ('LGS_TRL_W_FROZEN', 'LGSDTRL_W_FROZEN')
+METHODS = (
+    'LGS_TRL_W_FROZEN',
+    'LGSDTRL_W_FROZEN',
+    'PCA16_GS_TRL_W',
+    'RANDOM16_GS_TRL_W',
+    'MH_LGS_TRL_W_FROZEN',
+)
+SCALAR_TRL_METHODS = (
+    'LGS_TRL_W_FROZEN',
+    'PCA16_GS_TRL_W',
+    'RANDOM16_GS_TRL_W',
+    'MH_LGS_TRL_W_FROZEN',
+)
+FIXED_ENCODER_METHODS = ('PCA16_GS_TRL_W', 'RANDOM16_GS_TRL_W')
 
 
 class LatentScalarValue(nn.Module):
@@ -216,6 +230,8 @@ class FrozenLearnedGoalspaceAgent(PathBridgerAgent):
         ex_actions: jnp.ndarray,
         config: dict[str, Any],
         goal_encoder_params: Any,
+        *,
+        encoder_module: nn.Module | None = None,
     ) -> 'FrozenLearnedGoalspaceAgent':
         config = dict(config)
         method = str(config['method']).upper()
@@ -255,15 +271,19 @@ class FrozenLearnedGoalspaceAgent(PathBridgerAgent):
         if method == 'LGSDTRL_W_FROZEN':
             value = LatentTemporalQuasimetricValue(float(config['discount']))
             target_value = LatentTemporalQuasimetricValue(float(config['discount']))
-        else:
+        elif method in SCALAR_TRL_METHODS:
             value, target_value = LatentScalarValue(), LatentScalarValue()
+        else:
+            raise ValueError(f'Unsupported value head for method {method!r}.')
+        if encoder_module is None:
+            encoder_module = FixedLinearEncoder() if method in FIXED_ENCODER_METHODS else GoalEncoder()
         latent = jnp.zeros((len(observations), LATENT_DIM), dtype=jnp.float32)
         times = jnp.broadcast_to(
             jnp.linspace(0, 1, horizon + 1)[None],
             (len(observations), horizon + 1),
         )
         definitions = {
-            'goal_encoder': (GoalEncoder(), (observations,)),
+            'goal_encoder': (encoder_module, (observations,)),
             'value': (value, (latent, latent)),
             'target_value': (target_value, (latent, latent)),
             'endpoint': (endpoint, endpoint_args),
@@ -296,12 +316,20 @@ class FrozenLearnedGoalspaceAgent(PathBridgerAgent):
 
 LGS_TRL_W_FROZEN = FrozenLearnedGoalspaceAgent
 LGSDTRL_W_FROZEN = FrozenLearnedGoalspaceAgent
+PCA16_GS_TRL_W = FrozenLearnedGoalspaceAgent
+RANDOM16_GS_TRL_W = FrozenLearnedGoalspaceAgent
+MH_LGS_TRL_W_FROZEN = FrozenLearnedGoalspaceAgent
 
 __all__ = [
+    'FIXED_ENCODER_METHODS',
     'FrozenLearnedGoalspaceAgent',
     'LGSDTRL_W_FROZEN',
     'LGS_TRL_W_FROZEN',
+    'MH_LGS_TRL_W_FROZEN',
+    'METHODS',
+    'PCA16_GS_TRL_W',
+    'RANDOM16_GS_TRL_W',
+    'SCALAR_TRL_METHODS',
     'LatentScalarValue',
     'LatentTemporalQuasimetricValue',
-    'METHODS',
 ]

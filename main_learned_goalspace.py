@@ -18,8 +18,19 @@ import numpy as np
 
 from envs.env_utils import make_env_and_datasets
 from learned_goalspace.checkpoints import load_goal_encoder
-from learned_goalspace.downstream import FrozenLearnedGoalspaceAgent, METHODS
-from learned_goalspace.pretrain import VARIANT
+from learned_goalspace.downstream import (
+    FIXED_ENCODER_METHODS,
+    FrozenLearnedGoalspaceAgent,
+    METHODS,
+)
+from learned_goalspace.fixed_representations import (
+    FixedLinearEncoder,
+    encoder_params,
+    load_fixed_representation,
+)
+from learned_goalspace.multihorizon import VARIANT as MULTIHORIZON_VARIANT
+from learned_goalspace.pretrain import GoalEncoder
+from learned_goalspace.pretrain import VARIANT as FUTURE_VARIANT
 from utils.contrastive_pathbridger_evaluation import evaluate
 from utils.datasets import PathBridgerDataset
 from utils.flax_utils import restore_agent, save_agent
@@ -27,6 +38,21 @@ from utils.flax_utils import restore_agent, save_agent
 CHECKPOINTS = (100_000, 300_000, 500_000, 800_000, 1_000_000)
 EXECUTE_H = (5, 2, 1)
 ENVS = ('puzzle_3x3', 'cube_double')
+# Keep the historical alias used by the live FutureNCE queue identity.
+VARIANT = FUTURE_VARIANT
+
+
+def _encoder_variant(method: str) -> str:
+    method = method.upper()
+    if method in ('LGS_TRL_W_FROZEN', 'LGSDTRL_W_FROZEN'):
+        return FUTURE_VARIANT
+    if method == 'MH_LGS_TRL_W_FROZEN':
+        return MULTIHORIZON_VARIANT
+    if method == 'PCA16_GS_TRL_W':
+        return 'pca16'
+    if method == 'RANDOM16_GS_TRL_W':
+        return 'random16'
+    raise ValueError(f'Unknown method {method!r}.')
 
 
 def _write_json(path: Path, payload) -> None:
@@ -46,11 +72,30 @@ def config_for(env: str, method: str):
 
 
 def default_paths(env: str, method: str, seed: int) -> tuple[Path, Path]:
-    pretrain = (
-        Path('exp/learned_goalspace/pretrain') / env / VARIANT / f'seed{seed}' / 'checkpoints' / 'params_500000.pkl'
-    )
+    method = method.upper()
+    if method in FIXED_ENCODER_METHODS:
+        kind = 'pca16' if method == 'PCA16_GS_TRL_W' else 'random16'
+        encoder_path = Path('exp/learned_goalspace') / kind / env / f'seed{seed}' / 'representation.pkl'
+    elif method == 'MH_LGS_TRL_W_FROZEN':
+        encoder_path = (
+            Path('exp/learned_goalspace/multihorizon/pretrain')
+            / env
+            / MULTIHORIZON_VARIANT
+            / f'seed{seed}'
+            / 'checkpoints'
+            / 'params_500000.pkl'
+        )
+    else:
+        encoder_path = (
+            Path('exp/learned_goalspace/pretrain')
+            / env
+            / FUTURE_VARIANT
+            / f'seed{seed}'
+            / 'checkpoints'
+            / 'params_500000.pkl'
+        )
     downstream = Path('exp/learned_goalspace/downstream') / env / method / f'seed{seed}'
-    return pretrain, downstream
+    return encoder_path, downstream
 
 
 def _write_results(run_dir: Path) -> None:
@@ -122,6 +167,7 @@ def run(args) -> None:
     pretrain_checkpoint = Path(args.pretrain_checkpoint or default_pretrain)
     run_dir = Path(args.run_dir or default_run)
     run_dir.mkdir(parents=True, exist_ok=True)
+    encoder_variant = _encoder_variant(method)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -129,19 +175,36 @@ def run(args) -> None:
     try:
         dataset = PathBridgerDataset(train, config)
         example = dataset.sample(2)
-        encoder_params, encoder_metadata = load_goal_encoder(
-            pretrain_checkpoint,
-            env_name=config.env_name,
-            obs_dim=example['observations'].shape[-1],
-            step=args.pretrain_step,
-            allow_nonproduction_step=args.allow_nonproduction_pretrain,
-        )
+        obs_dim = example['observations'].shape[-1]
+        if method in FIXED_ENCODER_METHODS:
+            fixed = load_fixed_representation(pretrain_checkpoint)
+            if int(fixed['obs_dim']) != int(obs_dim):
+                raise ValueError(f'Fixed representation obs_dim {fixed["obs_dim"]} != dataset obs_dim {obs_dim}.')
+            goal_params = encoder_params(fixed)
+            encoder_metadata = {
+                key: (value.tolist() if isinstance(value, np.ndarray) and value.ndim <= 1 else value)
+                for key, value in fixed.items()
+                if key not in ('mean', 'kernel')
+            }
+            encoder_metadata['path'] = str(pretrain_checkpoint)
+            module = FixedLinearEncoder()
+        else:
+            goal_params, encoder_metadata = load_goal_encoder(
+                pretrain_checkpoint,
+                env_name=config.env_name,
+                obs_dim=obs_dim,
+                step=args.pretrain_step if args.pretrain_step > 0 else None,
+                allow_nonproduction_step=args.allow_nonproduction_pretrain,
+                expected_variant=encoder_variant,
+            )
+            module = GoalEncoder()
         agent = FrozenLearnedGoalspaceAgent.create(
             args.seed,
             example['observations'],
             example['actions'],
             config.to_dict(),
-            encoder_params,
+            goal_params,
+            encoder_module=module,
         )
         identity = {
             'agent': config.to_dict(),
@@ -190,10 +253,11 @@ def run(args) -> None:
             for episode in range(args.episodes)
         ]
         _write_json(run_dir / 'evaluation_manifest.json', manifest)
+        # Existing FutureNCE downstream identity keeps VARIANT == fullobs_future_nce.
         evaluation_identity = {
             'env': config.env_name,
             'method': method,
-            'variant': VARIANT,
+            'variant': encoder_variant,
             'seed': args.seed,
             'episodes_per_task': args.episodes,
             'N': int(config.eval_num_candidates),
@@ -220,7 +284,7 @@ def run(args) -> None:
                     result.update(
                         env=config.env_name,
                         method=method,
-                        variant=VARIANT,
+                        variant=encoder_variant,
                         seed=args.seed,
                         checkpoint=step,
                     )
@@ -247,7 +311,7 @@ def run(args) -> None:
                         result.update(
                             env=config.env_name,
                             method=method,
-                            variant=VARIANT,
+                            variant=encoder_variant,
                             seed=args.seed,
                             checkpoint=step,
                         )

@@ -132,6 +132,7 @@ def run_checkpoint_probes(
     step: int,
     env_name: str,
     observations: np.ndarray,
+    expected_variant: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     observations = np.asarray(observations, dtype=np.float32)
     params, _ = load_goal_encoder(
@@ -140,6 +141,7 @@ def run_checkpoint_probes(
         obs_dim=observations.shape[-1],
         step=step,
         allow_nonproduction_step=True,
+        expected_variant=expected_variant,
     )
     embeddings = frozen_embeddings(params, observations)
     train, test = deterministic_split(len(observations))

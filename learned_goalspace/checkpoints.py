@@ -12,9 +12,15 @@ from typing import Any
 import flax
 import numpy as np
 
-from learned_goalspace.pretrain import ARCHITECTURE, LATENT_DIM, VARIANT
+from learned_goalspace import multihorizon as multihorizon_mod
+from learned_goalspace import pretrain as pretrain_mod
 
 _NAME = re.compile(r'^params_(\d+)\.pkl$')
+
+VARIANT_ARCHITECTURE = {
+    pretrain_mod.VARIANT: pretrain_mod.ARCHITECTURE,
+    multihorizon_mod.VARIANT: multihorizon_mod.ARCHITECTURE,
+}
 
 
 def _path(path: str | os.PathLike[str], step: int | None = None) -> tuple[Path, int]:
@@ -60,13 +66,21 @@ def _validate_metadata(
     obs_dim: int,
     expected_step: int | None,
     allow_nonproduction_step: bool,
+    expected_variant: str | None = None,
 ) -> None:
+    variant = metadata.get('variant')
+    if expected_variant is not None:
+        if variant != expected_variant:
+            raise ValueError(f'Pretrain checkpoint variant mismatch: expected {expected_variant!r}, got {variant!r}.')
+    elif variant not in VARIANT_ARCHITECTURE:
+        raise ValueError(f'Unsupported pretrain variant {variant!r}; known={sorted(VARIANT_ARCHITECTURE)}.')
+    architecture = VARIANT_ARCHITECTURE[str(variant)]
     expected = {
-        'variant': VARIANT,
+        'variant': str(variant),
         'env_name': str(env_name),
         'obs_dim': int(obs_dim),
-        'latent_dim': LATENT_DIM,
-        'architecture': ARCHITECTURE,
+        'latent_dim': pretrain_mod.LATENT_DIM,
+        'architecture': architecture,
     }
     for key, value in expected.items():
         if metadata.get(key) != value:
@@ -89,12 +103,14 @@ def restore_pretrainer(
         payload = pickle.load(file)
     if payload.get('format') != 'learned_goalspace_pretrain_v1':
         raise ValueError(f'Invalid learned-goalspace checkpoint: {checkpoint}')
+    expected_variant = str(template.config['variant'])
     _validate_metadata(
         payload['metadata'],
         env_name=template.config['env_name'],
         obs_dim=int(template.config['obs_dim']),
         expected_step=resolved_step,
         allow_nonproduction_step=True,
+        expected_variant=expected_variant,
     )
     restored = flax.serialization.from_state_dict(template, payload['agent'])
     np.random.set_state(payload['numpy_random_state'])
@@ -109,6 +125,7 @@ def load_goal_encoder(
     obs_dim: int,
     step: int | None = None,
     allow_nonproduction_step: bool = False,
+    expected_variant: str | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     checkpoint, resolved_step = _path(path, step)
     with checkpoint.open('rb') as file:
@@ -122,6 +139,7 @@ def load_goal_encoder(
         obs_dim=obs_dim,
         expected_step=resolved_step,
         allow_nonproduction_step=allow_nonproduction_step,
+        expected_variant=expected_variant,
     )
     params = payload['agent']['network']['params']['modules_goal_encoder']
     # Match the container type produced by the installed Flax model.init.  A
@@ -130,6 +148,7 @@ def load_goal_encoder(
 
 
 __all__ = [
+    'VARIANT_ARCHITECTURE',
     'load_goal_encoder',
     'restore_pretrainer',
     'save_pretrain_checkpoint',

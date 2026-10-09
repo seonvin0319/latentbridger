@@ -1,4 +1,4 @@
-"""Train the oracle-free full-observation FutureNCE encoder."""
+"""Train the oracle-free full-observation FutureNCE / MultiHorizonNCE encoder."""
 
 from __future__ import annotations
 
@@ -20,11 +20,15 @@ from learned_goalspace.checkpoints import (
     restore_pretrainer,
     save_pretrain_checkpoint,
 )
-from learned_goalspace.dataset import FutureNCEDataset
-from learned_goalspace.pretrain import FutureNCEPretrainer, VARIANT
+from learned_goalspace.dataset import FutureNCEDataset, MultiHorizonNCEDataset
+from learned_goalspace.multihorizon import MultiHorizonNCEPretrainer
+from learned_goalspace.multihorizon import VARIANT as MULTIHORIZON_VARIANT
+from learned_goalspace.pretrain import FutureNCEPretrainer
+from learned_goalspace.pretrain import VARIANT as FUTURE_VARIANT
 
 CHECKPOINTS = (100_000, 300_000, 500_000)
 CONFIGS = {'puzzle_3x3': puzzle_config, 'cube_double': cube_config}
+VARIANTS = (FUTURE_VARIANT, MULTIHORIZON_VARIANT)
 
 
 def _write_json(path: Path, payload) -> None:
@@ -42,19 +46,36 @@ def _latest(run_dir: Path) -> tuple[Path | None, int]:
     return path, int(path.stem.split('_')[-1])
 
 
-def default_run_dir(env: str, seed: int) -> Path:
-    return Path('exp/learned_goalspace/pretrain') / env / VARIANT / f'seed{seed}'
+def default_run_dir(env: str, seed: int, variant: str) -> Path:
+    if variant == MULTIHORIZON_VARIANT:
+        return Path('exp/learned_goalspace/multihorizon/pretrain') / env / variant / f'seed{seed}'
+    return Path('exp/learned_goalspace/pretrain') / env / variant / f'seed{seed}'
+
+
+def _batch_keys(variant: str) -> tuple[str, ...]:
+    if variant == MULTIHORIZON_VARIANT:
+        return (
+            'queries',
+            'goals_short',
+            'goals_medium',
+            'goals_long',
+            'short_mask',
+            'medium_mask',
+            'long_mask',
+        )
+    return ('queries', 'goals')
 
 
 def run(args) -> None:
+    variant = args.variant
     config = CONFIGS[args.env]('gsdtrl_weighted')
-    run_dir = Path(args.run_dir) if args.run_dir else default_run_dir(args.env, args.seed)
+    run_dir = Path(args.run_dir) if args.run_dir else default_run_dir(args.env, args.seed, variant)
     run_dir.mkdir(parents=True, exist_ok=True)
     config_path = run_dir / 'config.json'
     identity = {
         'env': args.env,
         'env_name': config.env_name,
-        'variant': VARIANT,
+        'variant': variant,
         'seed': args.seed,
         'batch_size': args.batch_size,
         'dataset_dir': (str(Path(args.dataset_dir).resolve()) if args.dataset_dir else None),
@@ -68,11 +89,16 @@ def run(args) -> None:
     np.random.seed(args.seed)
     env, train, _ = make_env_and_datasets(config.env_name, dataset_dir=args.dataset_dir or None)
     try:
-        sampler = FutureNCEDataset(train, float(config.discount))
+        if variant == MULTIHORIZON_VARIANT:
+            sampler = MultiHorizonNCEDataset(train, float(config.discount))
+            agent_cls = MultiHorizonNCEPretrainer
+        else:
+            sampler = FutureNCEDataset(train, float(config.discount))
+            agent_cls = FutureNCEPretrainer
         std = np.asarray(train['observations'], dtype=np.float32).std(axis=0)
         # Constant features receive no artificial noise.
         example = np.asarray(train['observations'][:2], dtype=np.float32)
-        agent = FutureNCEPretrainer.create(args.seed, example, std, env_name=config.env_name)
+        agent = agent_cls.create(args.seed, example, std, env_name=config.env_name)
         latest, start = _latest(run_dir)
         if latest is not None:
             if not args.resume:
@@ -95,12 +121,13 @@ def run(args) -> None:
                     # JSONL write was interrupted.
                     continue
             log_path.write_text(''.join(json.dumps(row) + '\n' for row in rows if int(row['step']) <= start))
+        batch_keys = _batch_keys(variant)
         with log_path.open('a') as log:
             for step in range(start + 1, final_step + 1):
                 batch = {
                     key: jax.numpy.asarray(value)
                     for key, value in sampler.sample(args.batch_size).items()
-                    if key in ('queries', 'goals')
+                    if key in batch_keys
                 }
                 agent, info = agent.update(batch)
                 save = step in CHECKPOINTS or step == final_step
@@ -123,7 +150,7 @@ def run(args) -> None:
         marker = 'complete.json' if final_step == args.steps else 'paused.json'
         _write_json(
             run_dir / marker,
-            {'steps': final_step, 'variant': VARIANT, 'seed': args.seed},
+            {'steps': final_step, 'variant': variant, 'seed': args.seed},
         )
     finally:
         env.close()
@@ -132,6 +159,7 @@ def run(args) -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     result.add_argument('--env', choices=tuple(CONFIGS), required=True)
+    result.add_argument('--variant', choices=VARIANTS, default=FUTURE_VARIANT)
     result.add_argument('--seed', type=int, default=0)
     result.add_argument('--steps', type=int, default=500_000)
     result.add_argument('--stop-after', type=int, default=0)
