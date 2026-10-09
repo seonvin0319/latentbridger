@@ -30,11 +30,17 @@ tracking = ["wandb"]
 dev = ["ruff"]
 
 [tool.setuptools]
-py-modules = ["main", "evaluate"]
+py-modules = [
+    "main",
+    "evaluate",
+    "main_learned_goal_pretrain",
+    "main_learned_goal_probes",
+    "main_learned_goalspace",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agents*", "configs*", "envs*", "utils*"]
+include = ["agents*", "configs*", "envs*", "learned_goalspace*", "utils*"]
 
 [tool.setuptools.data-files]
 "share/pathbridger/assets" = ["assets/architecture.jpg"]
