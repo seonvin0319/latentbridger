@@ -1,40 +1,40 @@
 # Non-oracle goalspace summary
 
-Host: svcho
-Mission: **oracle goal abstraction removal**
+Host: svcho  
+Mission: **oracle goal abstraction removal**  
+Branch: `nonoracle-goalspace-trl`
 
 Oracle probes are post-hoc diagnostics only and never affect training or selection.
 
-## Oracle leakage (phase-2)
+## Main table (puzzle h5 @1M)
 
-See `ORACLE_LEAKAGE_AUDIT.md`.
+| Representation | HL oracle? | Proposer oracle? | Puzzle h5 | button exact | nuisance R² | NN purity |
+|---|---|---|---:|---:|---:|---:|
+| Oracle phi GS-TPB | yes | yes | ~98% (ref) | — | — | — |
+| PCA16 fixed + GS-TRL-W | no | **yes (leak)** | 57.2% | 1.000 | 0.799 | 0.978 |
+| Random16 + GS-TRL-W | no | **yes (leak)** | 30.4% | 0.864 | 0.670 | 0.931 |
+| Old FutureNCE + GS-TRL-W | no | **yes (leak)** | 29.2% | 0.015 | 0.078 | 0.841 |
+| MultiHorizon + GS-TRL-W | no | **yes (leak)** | 20.8% | 0.717 | 0.395 | 0.928 |
+| **BTRL16** | **no** | **no** | **17.6%** | TBD post-hoc | TBD | TBD |
+| **PCA-BTRL16** | **no** | **no** | pending | pending | pending | pending |
 
-Phase-2 FutureNCE / PCA / Random / MultiHorizon downstream methods use learned
-`E` for high-level value/ranking but **still feed authoritative `phi` into
-`FlowEndpointProposer`**. They are **oracle-assisted**, not non-oracle.
+BTRL16 h5 tasks @1M: `[0.84, 0.04, 0.00, 0.00, 0.00]` — **failed** as a general non-oracle abstraction. Artifacts preserved; do not rerun.
 
-## Main comparison table (puzzle h5 @1M)
+## Decision rule (after PCA-BTRL16 1M h5)
 
-| Representation | HL oracle? | Proposer oracle? | Puzzle h5@1M | Cube | Notes |
-|---|---|---|---:|---:|---|
-| Oracle phi GS-TPB | yes | yes | ~98% (ref) | TBD | intentional oracle baseline |
-| Old FutureNCE + GS-TRL-W | no | **yes** | 29.2% | — | leakage via proposer |
-| PCA16 fixed + GS-TRL-W | no | **yes** | 57.2% | — | leakage via proposer |
-| Random16 + GS-TRL-W | no | **yes** | 30.4% | — | leakage via proposer |
-| MultiHorizon + GS-TRL-W | no | **yes** | 20.8% | — | leakage via proposer |
-| **BTRL16** | **no** | **no** | TBD | TBD | TRL-only E, learned-goal proposer |
-| PCA-BTRL16 | no | no | TBD | TBD | after BTRL16 |
-| ACPR | no | no | TBD | TBD | only if TRL cases fail decision rule |
+- **Case A (≥70%)**: cube-double PCA-BTRL16; no ACPR yet  
+- **Case B (50–70%)**: cube-double PCA-BTRL16 + prepare ACPR  
+- **Case C (<50%)**: no cube-double; proceed to ACPR  
 
 ## Queue
 
-1. BTRL16 puzzle-3x3 seed0 1M
-2. PCA-BTRL16 puzzle-3x3 seed0 1M
-3. Decision A/B → cube-double best TRL **or** ACPR
-4. Off2Online only after BTRL16 + PCA-BTRL16 complete
+1. ~~BTRL16 puzzle seed0 1M~~ **done (17.6%)**
+2. PCA-BTRL16 puzzle seed0 1M ← next
+3. Case A/B/C automatic next step
+4. Off2Online: **not on svcho** (Choi / oracle track)
 
-## Branches
+## Artifacts
 
-- `nonoracle-goalspace-trl` — BTRL16 / PCA-BTRL16
-- `nonoracle-action-predictive` — ACPR (later)
-- Off2Online kept separate (not mixed into these commits)
+- BTRL16: `exp/nonoracle_goalspace/btrl16/puzzle_3x3/seed0/`
+- PCA-BTRL16: `exp/nonoracle_goalspace/pca_btrl16/puzzle_3x3/seed0/`
+- Audit: `ORACLE_LEAKAGE_AUDIT.md`
