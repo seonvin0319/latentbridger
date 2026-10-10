@@ -7,7 +7,7 @@ LIMIT=17179869184
 HIGH=16106127360
 PYTHON_BIN="${PYTHON:-/home/svcho/anaconda3/envs/offrl/bin/python}"
 OFFRL_ROOT="$(dirname "$(dirname "$PYTHON_BIN")")"
-NVIDIA_LIBS="$(find "$OFFRL_ROOT/lib/python"/3.*/site-packages/nvidia -type d -name lib 2>/dev/null | tr '\n' ':')"
+NVIDIA_LIBS="$(find "$OFFRL_ROOT"/lib/python*/site-packages/nvidia -type d -name lib 2>/dev/null | tr '\n' ':')"
 export LD_LIBRARY_PATH="${NVIDIA_LIBS}/usr/local/cuda/lib64:/usr/lib/nvidia:${LD_LIBRARY_PATH:-}"
 
 ENV_NAME="${ENV_NAME:-puzzle_3x3}"
