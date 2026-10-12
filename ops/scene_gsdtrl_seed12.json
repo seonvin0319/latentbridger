@@ -1,0 +1,88 @@
+{
+  "understood_as": "Train only Scene GSDTRL seeds 1 and 2 to exactly 1_000_000 updates from the seed0 code and config at 92df13e, then compare the six 1M h5 checkpoints under one shared evaluation seed. Do not change the algorithm, overwrite historical outputs, or add variants.",
+  "base_commit": "92df13e976d2a3861c06ae230bc3a5b682cde76d",
+  "seed0_run": "/home/shchoi/latentbridger-goalspace-ablation/exp/goalspace_ablation/scene/gsdtrl_weighted/seed0",
+  "entrypoint": "main_ctd_pathbridger.py",
+  "python": "/home/shchoi/latentbridger/.venv/bin/python",
+  "env": "scene",
+  "variant": "gsdtrl_weighted",
+  "seeds": [
+    1,
+    2
+  ],
+  "steps": 1000000,
+  "batch_size": 1024,
+  "episodes": 50,
+  "log_interval": 1000,
+  "dataset_dir_cli": "",
+  "datasets": [
+    {
+      "path": "/home/shchoi/.ogbench/data/scene-play-v0.npz",
+      "bytes": 267055508,
+      "sha256": "66625e0cd9f2fcf92f5988f4d1bedeb2aa8b1e748316e507e89f4a9afb87c341"
+    },
+    {
+      "path": "/home/shchoi/.ogbench/data/scene-play-v0-val.npz",
+      "bytes": 26795398,
+      "sha256": "6700c42a1602fa4a9457414395613d9d8ad6350181662a79751ca02dc0423cb2"
+    }
+  ],
+  "output_root": "exp/scene-gsdtrl-seed12-20261013",
+  "historical_runs": {
+    "gsdtrl_weighted": {
+      "0": "/home/shchoi/latentbridger-goalspace-ablation/exp/goalspace_ablation/scene/gsdtrl_weighted/seed0"
+    },
+    "gs_trl_weighted": {
+      "0": "/home/shchoi/latentbridger-goalspace-ablation/exp/goalspace_ablation/scene/gs_trl_weighted/seed0",
+      "1": "/home/shchoi/latentbridger-goalspace-ablation/exp/goalspace_ablation/scene/gs_trl_weighted/seed1",
+      "2": "/home/shchoi/latentbridger-goalspace-ablation/exp/goalspace_ablation/scene/gs_trl_weighted/seed2"
+    }
+  },
+  "eval": {
+    "checkpoint": 1000000,
+    "execute_h": 5,
+    "episodes_per_task": 50,
+    "common_eval_seed": 0,
+    "task_ids": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "num_candidates": 8,
+    "temperature": 0.5
+  },
+  "agent": {
+    "contrastive_temperature": 25.0,
+    "critic_p": [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "discount": 0.99,
+    "dynamics_p": [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    "endpoint_distribution": "flow",
+    "endpoint_value_scale": 5.0,
+    "env_name": "scene-play-v0",
+    "eval_num_candidates": 8,
+    "eval_temperature": 0.5,
+    "horizon": 25,
+    "lambda_bridge_geo": 0.0,
+    "lambda_nce": 0.0,
+    "lambda_pathnce": 0.0,
+    "metric_representation": "phi",
+    "nce_temperature_mode": "fixed",
+    "num_path_positives": 4,
+    "proposer_weighting": "transitive",
+    "tau_path": 5.0,
+    "value_distance_weight_power": 1.0,
+    "variant": "gsdtrl_weighted"
+  }
+}
