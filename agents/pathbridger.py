@@ -66,11 +66,34 @@ class ScalarTransitiveValue(nn.Module):
     """A bounded state-goal value, returned as a logit."""
 
     hidden_dims: Sequence[int] = _HIDDEN_DIMS
+    representation: str = 'full'
+    env_name: str = ''
+    phi_goal_obs_indices: tuple[int, ...] = ()
 
     @nn.compact
     def __call__(self, observations: jnp.ndarray, goals: jnp.ndarray) -> jnp.ndarray:
-        goal_inputs = goal_representation(goals, 'full')
-        inputs = jnp.concatenate([observations, goal_inputs], axis=-1)
+        if self.representation == 'full':
+            goal_inputs = goal_representation(goals, 'full')
+            state_inputs = observations
+        elif self.representation == 'phi':
+            state_inputs = goal_representation(
+                observations,
+                'phi',
+                self.phi_goal_obs_indices,
+                env_name=self.env_name or None,
+            )
+            goal_inputs = goal_representation(
+                goals,
+                'phi',
+                self.phi_goal_obs_indices,
+                env_name=self.env_name or None,
+            )
+        else:
+            raise ValueError(
+                "value representation must be 'full' or 'phi', got "
+                f'{self.representation!r}.'
+            )
+        inputs = jnp.concatenate([state_inputs, goal_inputs], axis=-1)
         return MLP(
             (*self.hidden_dims, 1),
             activate_final=False,
@@ -84,6 +107,7 @@ class GaussianEndpointProposer(nn.Module):
     state_dim: int
     env_name: str
     phi_goal_obs_indices: tuple[int, ...]
+    goal_mode: str = 'phi'
     hidden_dims: Sequence[int] = _HIDDEN_DIMS
 
     @nn.compact
@@ -94,7 +118,7 @@ class GaussianEndpointProposer(nn.Module):
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         goal_inputs = goal_representation(
             goals,
-            'phi',
+            self.goal_mode,
             self.phi_goal_obs_indices,
             env_name=self.env_name,
         )
@@ -120,6 +144,7 @@ class FlowEndpointProposer(nn.Module):
     state_dim: int
     env_name: str
     phi_goal_obs_indices: tuple[int, ...]
+    goal_mode: str = 'phi'
     hidden_dims: Sequence[int] = _HIDDEN_DIMS
 
     @nn.compact
@@ -132,7 +157,7 @@ class FlowEndpointProposer(nn.Module):
     ) -> jnp.ndarray:
         goal_inputs = goal_representation(
             goals,
-            'phi',
+            self.goal_mode,
             self.phi_goal_obs_indices,
             env_name=self.env_name,
         )
@@ -912,21 +937,47 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
         state_dim = int(observations.shape[-1])
         action_dim = int(actions.shape[-1])
         env_name = str(config['env_name'])
-        phi_goal_obs_indices = infer_phi_goal_obs_indices(env_name, state_dim)
-        assert_phi_goal_obs_indices(
-            state_dim,
-            'phi',
-            phi_goal_obs_indices,
-            where='PathBridgerAgent.create (endpoint goal representation)',
-            env_name=env_name,
-        )
-        value_def = ScalarTransitiveValue()
-        target_value_def = ScalarTransitiveValue()
+        endpoint_goal = str(config.get('endpoint_goal_representation', 'phi')).lower()
+        if endpoint_goal not in ('phi', 'full'):
+            raise ValueError(
+                "endpoint_goal_representation must be 'phi' or 'full', got "
+                f'{endpoint_goal!r}.'
+            )
+        if endpoint_goal == 'phi':
+            phi_goal_obs_indices = infer_phi_goal_obs_indices(env_name, state_dim)
+            assert_phi_goal_obs_indices(
+                state_dim,
+                'phi',
+                phi_goal_obs_indices,
+                where='PathBridgerAgent.create (endpoint goal representation)',
+                env_name=env_name,
+            )
+        else:
+            phi_goal_obs_indices = tuple()
+        config['endpoint_goal_representation'] = endpoint_goal
+        value_representation = str(config.get('value_representation', 'full'))
+        if value_representation == 'full':
+            value_def = ScalarTransitiveValue()
+            target_value_def = ScalarTransitiveValue()
+        elif value_representation == 'phi':
+            value_kwargs = dict(
+                representation='phi',
+                env_name=env_name,
+                phi_goal_obs_indices=phi_goal_obs_indices,
+            )
+            value_def = ScalarTransitiveValue(**value_kwargs)
+            target_value_def = ScalarTransitiveValue(**value_kwargs)
+        else:
+            raise ValueError(
+                "value_representation must be 'full' or 'phi', got "
+                f'{value_representation!r}.'
+            )
         if endpoint_distribution == 'gaussian':
             endpoint_def = GaussianEndpointProposer(
                 state_dim=state_dim,
                 env_name=env_name,
                 phi_goal_obs_indices=phi_goal_obs_indices,
+                goal_mode=endpoint_goal,
             )
             endpoint_args = (observations, observations)
         else:
@@ -934,6 +985,7 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
                 state_dim=state_dim,
                 env_name=env_name,
                 phi_goal_obs_indices=phi_goal_obs_indices,
+                goal_mode=endpoint_goal,
             )
             endpoint_args = (
                 observations,
