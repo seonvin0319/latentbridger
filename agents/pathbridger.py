@@ -290,7 +290,11 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
         ).mean()
 
         base_offsets = jnp.asarray(batch['base_offsets'], dtype=jnp.float32)
-        base_targets = jnp.power(discount, base_offsets)
+        base_targets = jnp.clip(
+            jnp.power(discount, base_offsets),
+            _VALUE_EPS,
+            1.0,
+        )
         base_bce = optax.sigmoid_binary_cross_entropy(
             base_logits,
             base_targets,
@@ -310,7 +314,7 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
             jnp.concatenate([subgoals, goals], axis=0),
         )
         target_left, target_right = jnp.split(
-            jax.nn.sigmoid(target_logits),
+            jnp.clip(jax.nn.sigmoid(target_logits), _VALUE_EPS, 1.0),
             2,
             axis=0,
         )
@@ -322,8 +326,12 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
         else:
             transitive_distance_weights = jnp.ones_like(base_bce)
 
-        exact_left = jnp.power(discount, left_offsets)
-        exact_right = jnp.power(discount, right_offsets)
+        exact_left = jnp.clip(
+            jnp.power(discount, left_offsets), _VALUE_EPS, 1.0,
+        )
+        exact_right = jnp.clip(
+            jnp.power(discount, right_offsets), _VALUE_EPS, 1.0,
+        )
         mixed_left = jnp.where(
             left_offsets <= _BASE_HORIZON,
             exact_left,
@@ -334,7 +342,9 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
             exact_right,
             target_right,
         )
-        transitive_targets = jax.lax.stop_gradient(mixed_left * mixed_right)
+        transitive_targets = jax.lax.stop_gradient(
+            jnp.clip(mixed_left * mixed_right, _VALUE_EPS, 1.0)
+        )
 
         transitive_bce = _expectile_bce(
             transitive_logits,

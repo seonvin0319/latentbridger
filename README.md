@@ -222,6 +222,10 @@ their sum. The base value loss is an unweighted mean. PBF flow matching averages
 the squared velocity error and draws its time in $[10^{-4}, 1-10^{-4}]$. The
 IDM objective is the elementwise mean squared error.
 
+Transitive value pairs include every strictly future pair with an internal
+split (`offset > 1`). Base targets, target-value constituents, and their
+transitive product are clipped to $[10^{-6}, 1]$ as in legacy training.
+
 The dataset sampler transfers only the five supervised bridge-prefix targets
 with each batch (`[B, 5, D]`), rather than the full path (`[B, K+1, D]`). During
 inference, the model likewise constructs only the six states consumed by the
