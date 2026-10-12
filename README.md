@@ -216,8 +216,11 @@ m_i=\frac{i(K-i)}{K^2},\qquad
 V(s,z)\,V(z,g).
 $$
 
-Distance weighting uses the target value without an undocumented clip and is
-applied to both base and transitive value losses.
+Distance weighting uses the online transitive value and clips each weight to
+$[0.05, 1]$. Only the transitive value loss uses those weights, normalized by
+their sum. The base value loss is an unweighted mean. PBF flow matching averages
+the squared velocity error and draws its time in $[10^{-4}, 1-10^{-4}]$. The
+IDM objective is the elementwise mean squared error.
 
 The dataset sampler transfers only the five supervised bridge-prefix targets
 with each batch (`[B, 5, D]`), rather than the full path (`[B, K+1, D]`). During

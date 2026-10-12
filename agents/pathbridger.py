@@ -40,6 +40,9 @@ _TAU_V = 0.7
 _TARGET_TAU = 0.005
 _ENDPOINT_WEIGHT_CAP = 5.0
 _FLOW_STEPS = 8
+_FLOW_TIME_MARGIN = 1e-4
+_DISTANCE_WEIGHT_CLIP_MIN = 0.05
+_DISTANCE_WEIGHT_CLIP_MAX = 1.0
 _BRIDGE_ALPHA_POWER = 0.8
 _GAUSSIAN_LOG_STD_MIN = -5.0
 _GAUSSIAN_LOG_STD_MAX = 1.0
@@ -232,15 +235,16 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
 
     def _distance_weight_from_values(
         self,
-        target_values: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Compute the un-clipped TRL distance weight from the target value."""
+        online_values: jnp.ndarray,
+    ) -> jnp.ndarray:
+        """Clip the TRL distance weight computed from the online value."""
 
-        target_values = jax.lax.stop_gradient(target_values)
-        safe_values = jnp.clip(target_values, _VALUE_EPS, 1.0)
+        online_values = jax.lax.stop_gradient(online_values)
+        safe_values = jnp.clip(online_values, _VALUE_EPS, 1.0)
         distance = jnp.log(safe_values) / jnp.log(
             jnp.asarray(self.config['discount'], dtype=jnp.float32)
         )
+        distance = jnp.maximum(distance, 0.0)
         weights = jnp.power(
             1.0 + distance,
             -jnp.asarray(
@@ -248,7 +252,13 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
                 dtype=jnp.float32,
             ),
         )
-        return jax.lax.stop_gradient(weights), target_values
+        return jax.lax.stop_gradient(
+            jnp.clip(
+                weights,
+                _DISTANCE_WEIGHT_CLIP_MIN,
+                _DISTANCE_WEIGHT_CLIP_MAX,
+            )
+        )
 
     def value_loss(
         self,
@@ -295,35 +305,22 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
         total_offsets = jnp.asarray(batch['value_offsets'], dtype=jnp.float32)
         right_offsets = total_offsets - left_offsets
 
-        use_distance_weights = (
-            float(self.config['value_distance_weight_power']) != 0.0
-        )
-        target_states = [observations, subgoals]
-        target_goals = [subgoals, goals]
-        if use_distance_weights:
-            target_states.extend([observations, observations])
-            target_goals.extend([batch['base_goals'], goals])
         target_logits = self.network.select('target_value')(
-            jnp.concatenate(target_states, axis=0),
-            jnp.concatenate(target_goals, axis=0),
+            jnp.concatenate([observations, subgoals], axis=0),
+            jnp.concatenate([subgoals, goals], axis=0),
         )
-        target_values = jnp.split(
+        target_left, target_right = jnp.split(
             jax.nn.sigmoid(target_logits),
-            len(target_states),
+            2,
             axis=0,
         )
-        target_left, target_right = target_values[:2]
-        if use_distance_weights:
-            base_distance_weights, base_target_values = (
-                self._distance_weight_from_values(target_values[2])
-            )
-            transitive_distance_weights, transitive_target_values = (
-                self._distance_weight_from_values(target_values[3])
+        base_loss = jnp.mean(base_bce)
+        if float(self.config['value_distance_weight_power']) != 0.0:
+            transitive_distance_weights = self._distance_weight_from_values(
+                jax.nn.sigmoid(transitive_logits)
             )
         else:
-            base_distance_weights = jnp.ones_like(base_bce)
             transitive_distance_weights = jnp.ones_like(base_bce)
-        base_loss = jnp.mean(base_distance_weights * base_bce)
 
         exact_left = jnp.power(discount, left_offsets)
         exact_right = jnp.power(discount, right_offsets)
@@ -352,15 +349,10 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
                 transitive_valids.shape[0],
                 -1,
             )[:, 0]
-        transitive_numerator = jnp.sum(
-            transitive_valids
-            * transitive_distance_weights
-            * transitive_bce
-        )
-        transitive_loss = transitive_numerator / jnp.maximum(
-            jnp.sum(transitive_valids),
-            1.0,
-        )
+        transitive_weights = transitive_valids * transitive_distance_weights
+        transitive_loss = jnp.sum(
+            transitive_weights * transitive_bce
+        ) / jnp.maximum(jnp.sum(transitive_weights), 1e-6)
 
         loss = self_loss + base_loss + transitive_loss
         info = {
@@ -371,7 +363,7 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
             'value/self_mean': jax.nn.sigmoid(self_logits).mean(),
             'value/base_mean': jax.nn.sigmoid(base_logits).mean(),
             'value/base_target_mean': base_targets.mean(),
-            'value/base_distance_weight_mean': base_distance_weights.mean(),
+            'value/base_distance_weight_mean': jnp.ones_like(base_bce).mean(),
             'value/transitive_mean': jax.nn.sigmoid(
                 transitive_logits
             ).mean(),
@@ -381,11 +373,6 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
             ),
             'value/transitive_valid_fraction': transitive_valids.mean(),
         }
-        if use_distance_weights:
-            info['value/base_target_value_mean'] = base_target_values.mean()
-            info['value/transitive_target_value_mean'] = (
-                transitive_target_values.mean()
-            )
         return loss, info
 
     def _endpoint_weights(
@@ -461,9 +448,15 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
                 displacement_targets.shape,
                 dtype=displacement_targets.dtype,
             )
+            time_margin = jnp.asarray(
+                _FLOW_TIME_MARGIN,
+                dtype=displacement_targets.dtype,
+            )
             times = jax.random.uniform(
                 time_rng,
                 (displacement_targets.shape[0], 1),
+                minval=time_margin,
+                maxval=1.0 - time_margin,
                 dtype=displacement_targets.dtype,
             )
             noisy_displacements = (
@@ -477,7 +470,7 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
                 times,
                 params=grad_params,
             )
-            flow_errors = jnp.sum(
+            flow_errors = jnp.mean(
                 jnp.square(predicted_velocities - target_velocities),
                 axis=-1,
             )
@@ -619,11 +612,11 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
             params=grad_params,
         )
         squared_errors = jnp.square(predicted_actions - batch['actions'])
-        loss = jnp.sum(squared_errors, axis=-1).mean()
+        loss = jnp.mean(squared_errors)
         return loss, {
             'idm/loss': loss,
             'idm/squared_l2': loss,
-            'idm/action_mse': squared_errors.mean(),
+            'idm/action_mse': loss,
         }
 
     @jax.jit
