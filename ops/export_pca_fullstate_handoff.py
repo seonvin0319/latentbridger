@@ -213,6 +213,7 @@ def main() -> None:
     if not args.seal_only:
         export_inputs()
         create_bundle()
+        write_handoff_index()
     if args.stop_before_ready:
         print(json.dumps({'status': 'exported_not_sealed', 'handoff': str(HANDOFF)}))
         return
