@@ -79,6 +79,8 @@ def export_inputs() -> None:
     matrix = np.asarray(std, dtype=np.float64)[:, None] * np.asarray(components, dtype=np.float64)
     if matrix.shape != (55, 16):
         raise RuntimeError(f'PCA matrix shape {matrix.shape}')
+    (HANDOFF / 'norm').mkdir(parents=True, exist_ok=True)
+    (HANDOFF / 'pca').mkdir(parents=True, exist_ok=True)
     np.save(HANDOFF / 'norm/obs_mean.npy', mean)
     np.save(HANDOFF / 'norm/obs_std.npy', std)
     np.save(HANDOFF / 'pca/pca_components_16.npy', components)
