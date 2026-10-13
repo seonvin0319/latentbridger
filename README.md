@@ -15,7 +15,8 @@ existing deployment layout `(1, 2, 2)` for 40-dimensional observations. This
 compatibility branch is the only computation exception; `PROVENANCE.json`
 records its exact patch and the upstream/packaged SHA-256 hashes. `agents/pathbridger.py` is a
 thin facade that calls the original dynamics update before the original critic
-update, using the pre-update target value. It does not enclose both in a new JIT.
+update, using the pre-update critic value selected by the original main.py helper
+(online ``modules_value`` unless ``critic._is_trl()``). It does not enclose both in a new JIT.
 
 The original initialization names/order, unused sampler draws, Flow key splits,
 separate value forwards, target clipping to `[1e-6, 1]`, Adam states and EMA are

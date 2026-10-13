@@ -16,6 +16,7 @@ import ogbench
 from check_core_equivalence import oracle
 from agents import PathBridgerAgent
 from utils.core_dataset import CoreDataset
+from legacy_extract import load_extract_critic_value_params
 
 
 def main():
@@ -26,6 +27,7 @@ def main():
     p.add_argument('--env', default='puzzle_3x3')
     p.add_argument('--output', type=Path, required=True)
     arg = p.parse_args()
+    extract_fn, _ = load_extract_critic_value_params()
     with tempfile.TemporaryDirectory() as temp:
         D, C, *_ = oracle(arg.reference_root, temp)
         cfg = importlib.import_module('configs.pbf.'+arg.env).get_config()
@@ -41,7 +43,7 @@ def main():
             del d, c  # Release initial states just as the native training loop does.
             def update(state, batch):
                 d, c = state
-                d, di = d.update(batch[0], critic_value_params=c.network.params['modules_target_value'])
+                d, di = d.update(batch[0], critic_value_params=extract_fn(c))
                 c, ci = c.update(batch[1])
                 return (d, c), (di, ci)
         else:

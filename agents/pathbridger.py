@@ -7,6 +7,7 @@ from pathbridger_core.agents.dynamics import DynamicsAgent
 from pathbridger_core.agents.critic import CriticAgent
 from pathbridger_core.utils.flax_utils import nonpytree_field
 from utils.core_config import legacy_configs
+from utils.critic_value_params import extract_critic_value_params
 
 CORE_REVISION = '3999f3759fe6bfce1e62966bb38f0ce277add843'
 
@@ -30,10 +31,12 @@ class PathBridgerAgent(flax.struct.PyTreeNode):
 
     def update(self, batch):
         # Do not wrap/merge these calls in another jit. Dynamics borrows the
-        # PRE-update target value; each original update owns its Adam and EMA.
+        # PRE-update critic value selected by the original main.py helper
+        # (online modules_value unless critic._is_trl()); each original update
+        # owns its Adam and EMA.
         db, cb = batch
         d, di = self.dynamics.update(
-            db, critic_value_params=self.critic.network.params['modules_target_value'])
+            db, critic_value_params=extract_critic_value_params(self.critic))
         c, ci = self.critic.update(cb)
         info = {**{'dynamics/' + k: v for k, v in di.items()},
                 **{'critic/' + k: v for k, v in ci.items()}}

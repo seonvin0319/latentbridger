@@ -1,5 +1,41 @@
 # 3999f37 보존 배포판 검증
 
+## 정정 (2026-10-13, critic value wiring)
+
+`1a5a332`의 entrypoint 256-update “exact” 결론은 **무효**다. 당시
+`tests/check_entrypoint_256.py`가 legacy `dynamics.update`에도
+`modules_target_value`를 직접 넣었고, 배포본도 동일하게 target을 하드코딩했다.
+원본 `main.py`는 `_extract_critic_value_params(critic_agent)`를 쓰며, 원본
+`CriticAgent`에는 `_is_trl`이 없어 **online `modules_value`** 를 전달한다.
+양쪽에 target을 넣은 비교는 원본 entrypoint 동등성의 근거가 아니다.
+
+고친 검증(AST로 추출한 원본 helper)으로 `127f540` 배포 동작을 다시 비교한 결과:
+
+- 최초 불일치: **step 2**
+- 배포 전달 모듈: `modules_target_value` (sha `93d7280c…80f7`)
+- legacy 전달 모듈: `modules_value` (sha `6072d307…5ca9`)
+- FM raw는 같았고(2.52223), weight_mean / weighted_fm 이 갈라짐
+  (배포 1.7119 / 4.2432 vs legacy 1.0008 / 2.5234)
+- 기록: [entrypoint_pre_fix_127f540.json](entrypoint_pre_fix_127f540.json)
+
+수정: `PathBridgerAgent.update`와 `utils/training.py::update_training_state`가
+원본과 같은 pre-update critic 선택(`utils/critic_value_params.py`, 원문 분기 보존)을
+쓰도록 바꿨다. target을 online으로 무조건 치환하지 않는다.
+
+수정 후 **수동 학습 루프** 재검증(prefetch off, seed 1, batch 1024, p33):
+
+| 경로 | 256 update | 종류 |
+|---|---|---|
+| `PathBridgerAgent.update` | exact | manual_training_loop |
+| `update_training_state` (main 기본 버퍼 재사용) | exact | manual_training_loop |
+
+CLI로 legacy main과 나란히 돌린 256-update 비교는 **이번 작업에서 수행하지 않았다**.
+CPU 동일 체크포인트 추론(후보·점수·선택·bridge·action)은 학습 value wiring과
+별개이며 eval 방식은 변경하지 않았다. 기존
+[cpu_evaluator_same_ckpt.json](cpu_evaluator_same_ckpt.json) 기록을 유지한다.
+
+---
+
 2026-10-13: 검증 코드 `0eeeb8a`를 main에 반영·push하고 준비 브랜치를 삭제했다. 아래 수치와 준비 단계 기록은 검증 당시의 결과이며, 현재 반영 상태는 [MAIN_READY.md](MAIN_READY.md)에 기록했다. 전체 환경 seed 0·1M 실험은 진행 중이다.
 
 기준 커밋: `3999f3759fe6bfce1e62966bb38f0ce277add843`

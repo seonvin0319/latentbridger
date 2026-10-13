@@ -1,0 +1,33 @@
+{
+  "mode": "plain_update",
+  "verification_kind": "manual_training_loop",
+  "cli_verification": false,
+  "reuse_train_buffers": false,
+  "legacy_helper": "AST-extracted _extract_critic_value_params",
+  "helper_source": "def _extract_critic_value_params(critic_agent: Any) -> Any | None:\n    if critic_agent is None:\n        return None\n    if hasattr(critic_agent, '_is_trl') and bool(critic_agent._is_trl()):\n        return critic_agent.network.params.get('modules_target_value', None)\n    return critic_agent.network.params.get('modules_value', None)",
+  "legacy_reference_commit": "3999f3759fe6bfce1e62966bb38f0ce277add843",
+  "steps": 256,
+  "seed": 1,
+  "batch_size": 1024,
+  "prefetch": false,
+  "dataset_file": "/home/choi/.ogbench/data/puzzle-3x3-play-v0-val.npz",
+  "dataset_file_sha256": "897a3f491decf46d72ea73425dc9b2c969530eca190708d763e632850b856550",
+  "runtime": {
+    "jax": "0.6.2",
+    "jaxlib": "0.6.2",
+    "flax": "0.10.6",
+    "optax": "0.2.5",
+    "numpy": "2.4.6",
+    "backend": "gpu",
+    "devices": [
+      "cuda:0"
+    ],
+    "xla_flags": "--xla_gpu_autotune_level=0 --xla_gpu_deterministic_ops=true"
+  },
+  "first_mismatch": null,
+  "passed": true,
+  "valid_starts_count": 97500,
+  "valid_starts_sha256": "e7aead432c43f9ff8cf963ab826da2474db279419d421e5ec54d31fdfb3aa4e3",
+  "initialization_exact": true,
+  "updates_exact": 256
+}

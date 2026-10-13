@@ -24,6 +24,8 @@ from agents import PathBridgerAgent
 from utils.core_dataset import CoreDataset
 from utils.training import own_training_state, update_training_state
 from utils.flax_utils import save_agent, restore_agent, load_agent
+from utils.critic_value_params import extract_critic_value_params
+from legacy_extract import load_extract_critic_value_params
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -130,6 +132,9 @@ def main():
         d = D.create(1, odb['observations'], dc, ex_actions=odb['actions'])
         c = C.create(1, ocb['observations'], None, ocb['action_chunk_actions'], cc, ex_goals=ocb.get('value_goals'))
         result['initialization'] = states(a, d, c, 'initialization')
+        # Prefer AST extraction from the pinned PathBridger_legacy main.py.
+        legacy_extract, helper_source = load_extract_critic_value_params()
+        result['legacy_value_helper'] = helper_source
         batches = []
         for i in range(args.steps):
             before = np.random.get_state()
@@ -148,7 +153,7 @@ def main():
         # Three updates from fresh initialization, including every original Q head.
         for i, batch in enumerate(batches[:3]):
             a, _ = update(a, batch)
-            d, _ = d.update(batch[0], critic_value_params=c.network.params['modules_target_value'])
+            d, _ = d.update(batch[0], critic_value_params=legacy_extract(c))
             c, _ = c.update(batch[1])
             states(a, d, c, f'fresh {i+1}')
         result['fresh_updates_exact'] = min(3, len(batches))
@@ -165,21 +170,24 @@ def main():
                 a = own_training_state(a)
         result['starting_optimizer_count'] = int(d.network.opt_state[0].count)
         # Native loss paths consume identical internal Flow noise/time keys.
-        def gradients(d, c, batch, key):
+        def gradients(d, c, batch, key, value_params):
             ld, gd = jax.value_and_grad(lambda params: d.total_loss(batch[0], params, key,
-                c.network.params['modules_target_value']), has_aux=True)(d.network.params)
+                value_params), has_aux=True)(d.network.params)
             lc, gc = jax.value_and_grad(lambda params: c.total_loss(batch[1], params), has_aux=True)(c.network.params)
             return ld, gd, lc, gc
         gf = jax.jit(gradients)
-        new_grad = gf(a.dynamics, a.critic, batches[0], jax.random.PRNGKey(9013))
-        old_grad = gf(d, c, batches[0], jax.random.PRNGKey(9013))
+        new_grad = gf(a.dynamics, a.critic, batches[0], jax.random.PRNGKey(9013),
+                      extract_critic_value_params(a.critic))
+        old_grad = gf(d, c, batches[0], jax.random.PRNGKey(9013), legacy_extract(c))
         result['loss_metrics_and_gradients'] = exact(new_grad, old_grad, 'gradients')
         for i, batch in enumerate(batches):
             _, loss_key = jax.random.split(d.rng)
-            step_gradients = exact(gf(a.dynamics, a.critic, batch, loss_key),
-                                   gf(d, c, batch, loss_key), f'gradient {i+1}')
+            dep_value = extract_critic_value_params(a.critic)
+            leg_value = legacy_extract(c)
+            step_gradients = exact(gf(a.dynamics, a.critic, batch, loss_key, dep_value),
+                                   gf(d, c, batch, loss_key, leg_value), f'gradient {i+1}')
             a, info = update(a, batch)
-            d, di = d.update(batch[0], critic_value_params=c.network.params['modules_target_value'])
+            d, di = d.update(batch[0], critic_value_params=leg_value)
             c, ci = c.update(batch[1])
             metrics = {**{'dynamics/'+k: v for k, v in di.items()}, **{'critic/'+k: v for k, v in ci.items()}}
             row = {'step': i+1, 'gradients': step_gradients, 'states': states(a, d, c, f'update {i+1}'),

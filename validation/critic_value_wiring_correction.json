@@ -1,0 +1,41 @@
+{
+  "invalid_commit": "1a5a3324a9c359a7d14f0f0987e9e44beb2c9057",
+  "invalid_reason": "check_entrypoint_256.py passed modules_target_value to both legacy and deployment dynamics.update; original main.py uses _extract_critic_value_params which selects modules_value when CriticAgent has no _is_trl.",
+  "comparison_baseline_before_fix": "127f54039aea221b11cae70f7b433f5be0597d8f",
+  "legacy_reference": "3999f3759fe6bfce1e62966bb38f0ce277add843",
+  "pre_fix": {
+    "artifact": "validation/entrypoint_pre_fix_127f540.json",
+    "first_mismatch_step": 2,
+    "deployment_value_module": "modules_target_value",
+    "legacy_value_module": "modules_value",
+    "fm_raw_equal": true,
+    "fm_raw": 2.522228717803955,
+    "deployment_weight_mean": 1.7119183540344238,
+    "legacy_weight_mean": 1.0008330345153809,
+    "deployment_weighted_fm": 4.243231296539307,
+    "legacy_weighted_fm": 2.523395538330078
+  },
+  "fix": {
+    "files": [
+      "utils/critic_value_params.py",
+      "agents/pathbridger.py",
+      "utils/training.py"
+    ],
+    "behavior": "Preserve original hasattr(_is_trl) branch; PathBridger CriticAgent takes modules_value."
+  },
+  "post_fix_manual_loops": {
+    "plain_update_256": true,
+    "reuse_train_buffers_256": true,
+    "cli_vs_legacy_256": false,
+    "artifacts": [
+      "validation/entrypoint_256.json",
+      "validation/entrypoint_256_plain.json",
+      "validation/entrypoint_256_reuse.json"
+    ]
+  },
+  "cpu_same_checkpoint_inference": {
+    "unchanged_eval_protocol": true,
+    "artifact": "validation/cpu_evaluator_same_ckpt.json",
+    "note": "Separate from training value wiring; eval method not modified in this correction."
+  }
+}

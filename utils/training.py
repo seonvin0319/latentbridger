@@ -8,6 +8,7 @@ import jax
 
 from pathbridger_core.agents.dynamics import DynamicsAgent
 from pathbridger_core.agents.critic import CriticAgent
+from utils.critic_value_params import extract_critic_value_params
 
 # Compile exactly the native function bodies at their original JIT boundaries.
 # Only ownership of the input state buffers differs; no outer JIT or new math.
@@ -33,9 +34,10 @@ def update_training_state(agent, batch):
     # Retain the public critic's validation before entering its native JIT.
     # Validate before donating dynamics so an invalid batch leaves state intact.
     agent.critic._validate_trl_batch(cb)
+    # Same pre-update critic selection as legacy main.py / PathBridgerAgent.update.
     d, di = _dynamics_update(
         agent.dynamics, db,
-        critic_value_params=agent.critic.network.params['modules_target_value'])
+        critic_value_params=extract_critic_value_params(agent.critic))
     c, ci = _critic_update(agent.critic, cb)
     info = {**{'dynamics/' + key: value for key, value in di.items()},
             **{'critic/' + key: value for key, value in ci.items()}}
