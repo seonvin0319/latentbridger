@@ -1,6 +1,6 @@
 {
   "version": "0.2.2",
-  "branch": "preserve-3999f37-core",
+  "branch": "main",
   "installed_root": "/home/shchoi/PathBridger-preserved3999/.runtime-0.2.2",
   "wheel": "/home/shchoi/PathBridger-preserved3999/dist/pathbridger-0.2.2-py3-none-any.whl",
   "wheel_sha256": "dde0aa6dcb436bde239e22fac179e83c3386cdf1472fbb72a78154ca37d78e6f",
@@ -14,5 +14,8 @@
   "compatibility_patch": "scene obs_dim=40 -> layout (1,2,2)",
   "reuse_train_buffers_default": true,
   "source_commit": "e9db39cb4417626e48314dbaaa722fa9607c6e1c",
-  "main_status": "prepared, not promoted or pushed"
+  "main_status": "promoted and pushed; preparation branch deleted",
+  "preparation_branch": "preserve-3999f37-core",
+  "promoted_code_commit": "0eeeb8a0f203828d2e291e422e478942b5d68c85",
+  "installed_worktree_mode": "detached HEAD at promoted code commit"
 }

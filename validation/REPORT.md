@@ -1,5 +1,7 @@
 # 3999f37 보존 배포판 검증
 
+2026-10-13: 검증 코드 `0eeeb8a`를 main에 반영·push하고 준비 브랜치를 삭제했다. 아래 수치와 준비 단계 기록은 검증 당시의 결과이며, 현재 반영 상태는 [MAIN_READY.md](MAIN_READY.md)에 기록했다. 전체 환경 seed 0·1M 실험은 진행 중이다.
+
 기준 커밋: `3999f3759fe6bfce1e62966bb38f0ce277add843`
 브랜치: `preserve-3999f37-core` · 작업 경로: `/home/shchoi/PathBridger-preserved3999`
 

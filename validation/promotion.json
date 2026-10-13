@@ -1,0 +1,16 @@
+{
+  "promoted_at": "2026-10-13T05:31:24.873027+00:00",
+  "remote": "https://github.com/SChoish/PathBridger.git",
+  "branch": "main",
+  "promoted_code_commit": "0eeeb8a0f203828d2e291e422e478942b5d68c85",
+  "previous_remote_main": "0bf1be462a063c66dc53a7367e0cfc2aabb3b5cf",
+  "fast_forward": true,
+  "push_verified": true,
+  "deleted_local_branch": "preserve-3999f37-core",
+  "preparation_branch_existed_on_remote": false,
+  "installed_worktree": "/home/shchoi/PathBridger-preserved3999",
+  "installed_worktree_detached": true,
+  "active_training_install": "/home/shchoi/PathBridger-preserved3999/.runtime-0.2.2",
+  "training_processes_preserved": true,
+  "scope": "Promote validated implementation; full 16-preset seed-0 1M experiments remain in progress."
+}
