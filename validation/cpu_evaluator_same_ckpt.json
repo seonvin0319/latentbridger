@@ -1,0 +1,16 @@
+{
+  "backend": "cpu",
+  "protocol": "3999-idm-strict-reset-v2",
+  "checkpoint_run": "/home/choi/Pathbridger_flow/runs/_other/puzzle-3x3-play-v0/20260718_160615_seed0_puzzle-3x3-play-v0",
+  "cases": 125,
+  "evaluator_functions_matched": [
+    "_idm_actions_from_trajectories",
+    "_idm_action_chunk",
+    "_evaluate_env_tasks"
+  ],
+  "first_mismatch": null,
+  "passed": true,
+  "public_batched_action_api_exact": true,
+  "exact_episode_count": 125,
+  "episode_hash_dump": "/home/choi/pb_reimpl_workspace/PathBridger_official/validation/cpu_evaluator_episode_hashes.json"
+}

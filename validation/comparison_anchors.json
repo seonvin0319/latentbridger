@@ -1,0 +1,12 @@
+{
+  "recorded_at": "2026-10-13T11:31:55.889215+00:00",
+  "legacy_repo": "https://github.com/SChoish/PathBridger_legacy",
+  "legacy_reference_commit": "3999f3759fe6bfce1e62966bb38f0ce277add843",
+  "legacy_local_path": "/home/choi/pb_reimpl_workspace/PathBridger_legacy",
+  "legacy_detached": true,
+  "legacy_unmodified": true,
+  "main_repo": "https://github.com/SChoish/PathBridger",
+  "main_comparison_start_commit": "127f54039aea221b11cae70f7b433f5be0597d8f",
+  "main_local_path": "/home/choi/pb_reimpl_workspace/PathBridger_official",
+  "note": "Do not modify PathBridger_legacy working tree; it is the fixed unmodified reference."
+}

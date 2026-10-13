@@ -1,0 +1,83 @@
+{
+  "legacy_reference_commit": "3999f3759fe6bfce1e62966bb38f0ce277add843",
+  "main_comparison_start_commit": "127f54039aea221b11cae70f7b433f5be0597d8f",
+  "steps": 256,
+  "seed": 1,
+  "batch_size": 1024,
+  "prefetch": false,
+  "dataset_file": "/home/choi/.ogbench/data/puzzle-3x3-play-v0-val.npz",
+  "dataset_file_sha256": "897a3f491decf46d72ea73425dc9b2c969530eca190708d763e632850b856550",
+  "array_hashes": {
+    "observations": "53a2b4e447e2d1b90f0ef7d8fbd759092aa8e8a3cebb3c1cbc8bf47417a5461d",
+    "actions": "5234e74f11bd5d5c0b9caf99dce990194a20bfa2928186b9db436a0fe04ebe1e",
+    "terminals": "518659e1b312ce29dd4583ac97a569f225148ed6e190e96ea5173c6fa3cd3fd1",
+    "valids": "4fe2d6a72f4cde6fd228269617cfb3318a5dae8e654a6f5de5f533d9af9d92ab"
+  },
+  "runtime": {
+    "jax": "0.6.2",
+    "jaxlib": "0.6.2",
+    "flax": "0.10.6",
+    "optax": "0.2.5",
+    "numpy": "2.4.6",
+    "python": "3.11.17",
+    "backend": "gpu",
+    "devices": [
+      "cuda:0"
+    ],
+    "xla_flags": "--xla_gpu_autotune_level=0 --xla_gpu_deterministic_ops=true",
+    "xla_python_client_preallocate": "false"
+  },
+  "resolved_config": {
+    "public": {
+      "critic_p": [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      "discount": 0.99,
+      "dynamics_p": [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "endpoint_distribution": "flow",
+      "endpoint_value_scale": 10.0,
+      "env_name": "puzzle-3x3-play-v0",
+      "eval_num_candidates": 32,
+      "eval_temperature": 1.0,
+      "horizon": 25,
+      "value_distance_weight_power": 0.5
+    },
+    "dynamics_key_count": 64,
+    "critic_key_count": 27,
+    "dynamics_sha256": "9d9e209fd244fe610407cf2a58fa87c2746dc5707b245e4b4fe201161216dd5d",
+    "critic_sha256": "8c2a2c6ecc59df14db33ef5644e1a61da56b8a1f7d1e722d50ddbc9ee161c6c9"
+  },
+  "paper_run_settings": {
+    "status": "partially_confirmed",
+    "confirmed_from_supplementary_best_table": {
+      "env": "puzzle-3x3-play-v0",
+      "endpoint_distribution": "flow",
+      "horizon_K": 25,
+      "discount_gamma": 0.99,
+      "endpoint_value_scale_gap": 10.0,
+      "value_distance_weight_power_lambda": 0.5,
+      "eval_num_candidates_N": 32,
+      "eval_temperature_T": 1.0,
+      "batch_size": 1024
+    },
+    "note": "Public configs/pbf/puzzle_3x3.py matches the paper Supplementary best table. Local research runs under Pathbridger_flow often used other K/gap values (e.g. K=40 gap=0.5); those are not treated as the paper run.",
+    "estimated_or_unconfirmed": [
+      "exact paper-run JAX/CUDA/driver versions on the original host",
+      "exact paper-run git working tree dirty state"
+    ]
+  },
+  "first_mismatch": null,
+  "passed": true,
+  "valid_starts_count": 97500,
+  "valid_starts_sha256": "e7aead432c43f9ff8cf963ab826da2474db279419d421e5ec54d31fdfb3aa4e3",
+  "initialization_exact": true,
+  "updates_exact": 256
+}
