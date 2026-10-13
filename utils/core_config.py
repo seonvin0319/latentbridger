@@ -14,21 +14,32 @@ def legacy_configs(config, obs_dim, action_dim):
         raise ValueError('Require horizon >= 5 and 0 < discount < 1.')
     if not np.isfinite(cfg['endpoint_value_scale']) or cfg['endpoint_value_scale'] < 0:
         raise ValueError('endpoint_value_scale must be finite and nonnegative.')
+    mode = str(cfg.get('pathbridger_mode', 'pb')).lower()
+    if mode not in ('pb', 'oracle_pb'):
+        raise ValueError(f"pathbridger_mode must be 'pb' or 'oracle_pb', got {mode!r}.")
     dc, cc = get_dynamics_config().to_dict(), get_critic_config().to_dict()
     phi = infer_phi_goal_obs_indices(cfg['env_name'], obs_dim)
     # Dynamics' own discount retains the original .99 default; the public
     # discount controls the critic, as in the original YAML/main.py interface.
+    # Oracle PB keeps the full-state proposer (phi goal conditioning) and only
+    # switches the value head + value-based endpoint weights to (phi(s), phi(g)).
+    value_state_rep = 'phi' if mode == 'oracle_pb' else 'full'
+    value_goal_rep = 'phi' if mode == 'oracle_pb' else 'full'
     dc.update(env_name=cfg['env_name'], phi_goal_obs_indices=phi,
+              pathbridger_mode=mode,
               dynamics_N=int(cfg['horizon']), subgoal_steps=int(cfg['horizon']),
               planner_type='forward_bridge_residual', progress_alpha=0.8,
               residual_target_mode='displacement', subgoal_target_mode='displacement',
               subgoal_goal_representation='phi',
+              subgoal_value_goal_representation=value_goal_rep,
+              subgoal_value_state_representation=value_state_rep,
               subgoal_distribution='flow' if cfg['endpoint_distribution'] == 'flow' else 'diag_gaussian',
               subgoal_stochastic_loss='mse' if cfg['endpoint_distribution'] == 'flow' else 'nll',
               subgoal_value_gap_scale=float(cfg['endpoint_value_scale']),
               subgoal_eval_num_samples=int(cfg['eval_num_candidates']),
               subgoal_temperature=float(cfg['eval_temperature']))
     cc.update(env_name=cfg['env_name'], phi_goal_obs_indices=phi,
+              pathbridger_mode=mode,
               batch_size=1024, action_dim=int(action_dim),
               algorithm='trl', critic_type='trl', num_qs=2, q_agg='mean', target_tau=0.005,
               full_chunk_horizon=int(cfg['horizon']), discount=float(cfg['discount']),

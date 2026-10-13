@@ -46,12 +46,20 @@ class ScalarValueNet(nn.Module):
     hidden_dims: Sequence[int]
     layer_norm: bool = True
     goal_representation: str = 'full'
+    # PB keeps observations full. Oracle PB sets this to 'phi' so V reads (phi(s), phi(g)).
+    state_representation: str = 'full'
     phi_goal_obs_indices: tuple[int, ...] = ()
     env_name: str = ''
 
     @nn.compact
     def __call__(self, observations: jnp.ndarray, goals: jnp.ndarray | None = None) -> jnp.ndarray:
-        xs = [observations]
+        obs = goal_representation(
+            observations,
+            self.state_representation,
+            self.phi_goal_obs_indices,
+            env_name=self.env_name,
+        )
+        xs = [obs]
         if goals is not None:
             xs.append(
                 goal_representation(
@@ -450,36 +458,57 @@ class CriticAgent(flax.struct.PyTreeNode):
         hdims = _VALUE_HIDDEN_DIMS
         ln = _LAYER_NORM
         nq = _NUM_QS
-        goal_rep = _GOAL_REPRESENTATION
+        mode = str(config.get('pathbridger_mode', 'pb')).lower()
+        if mode not in ('pb', 'oracle_pb'):
+            raise ValueError(f"pathbridger_mode must be 'pb' or 'oracle_pb', got {mode!r}.")
+        # Action/chunk critics stay on full-state inputs in both modes.
+        action_goal_rep = _GOAL_REPRESENTATION
+        if mode == 'oracle_pb':
+            # Oracle PB: V_phi(phi(s), phi(g)) — oracle task projection on both args.
+            value_state_rep = 'phi'
+            value_goal_rep = 'phi'
+        else:
+            value_state_rep = 'full'
+            value_goal_rep = _GOAL_REPRESENTATION
         phi_idxs = normalize_phi_goal_obs_indices(config.get('phi_goal_obs_indices', ()))
         env_name = str(config.get('env_name', ''))
         assert_phi_goal_obs_indices(
             int(ex_obs.shape[-1]),
-            goal_rep,
+            value_goal_rep if mode == 'oracle_pb' else action_goal_rep,
             phi_idxs,
             where='CriticAgent.create (critic goal_representation)',
             env_name=env_name,
         )
+        if mode == 'oracle_pb':
+            assert_phi_goal_obs_indices(
+                int(ex_obs.shape[-1]),
+                value_state_rep,
+                phi_idxs,
+                where='CriticAgent.create (critic state_representation)',
+                env_name=env_name,
+            )
 
         value_def = ScalarValueNet(
             hdims,
             layer_norm=ln,
-            goal_representation=goal_rep,
+            goal_representation=value_goal_rep,
+            state_representation=value_state_rep,
             phi_goal_obs_indices=phi_idxs,
             env_name=env_name,
         )
         target_value_def = ScalarValueNet(
             hdims,
             layer_norm=ln,
-            goal_representation=goal_rep,
+            goal_representation=value_goal_rep,
+            state_representation=value_state_rep,
             phi_goal_obs_indices=phi_idxs,
             env_name=env_name,
         )
         action_critic_def = BinaryChunkCritic(
-            hdims, nq, ln, goal_representation=goal_rep, phi_goal_obs_indices=phi_idxs, env_name=env_name
+            hdims, nq, ln, goal_representation=action_goal_rep, phi_goal_obs_indices=phi_idxs, env_name=env_name
         )
         target_action_critic_def = BinaryChunkCritic(
-            hdims, nq, ln, goal_representation=goal_rep, phi_goal_obs_indices=phi_idxs, env_name=env_name
+            hdims, nq, ln, goal_representation=action_goal_rep, phi_goal_obs_indices=phi_idxs, env_name=env_name
         )
 
         network_info = {
@@ -498,6 +527,9 @@ class CriticAgent(flax.struct.PyTreeNode):
         network = TrainState.create(network_def, network_params, tx=optax.adam(float(config['lr'])))
         cfg_out = dict(config)
         cfg_out['phi_goal_obs_indices'] = phi_idxs
+        cfg_out['pathbridger_mode'] = mode
+        cfg_out['value_state_representation'] = value_state_rep
+        cfg_out['value_goal_representation'] = value_goal_rep
         return cls(rng=rng, network=network, config=flax.core.FrozenDict(**cfg_out))
 
 

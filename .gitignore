@@ -16,3 +16,4 @@ validation/installed_smoke/
 validation/scene_smoke/
 .runtime-*/
 validation/optimization_smoke/
+logs/

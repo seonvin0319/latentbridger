@@ -56,6 +56,8 @@ def get_config() -> ml_collections.ConfigDict:
     return ml_collections.ConfigDict(
         dict(
             env_name='antmaze-medium-navigate-v0',
+            # 'pb' = full-state transitive V; 'oracle_pb' = V_phi(phi(s), phi(g)).
+            pathbridger_mode='pb',
             endpoint_distribution='flow',
             horizon=25,
             discount=0.99,

@@ -1128,6 +1128,14 @@ class _DynamicsAgentCore(flax.struct.PyTreeNode):
             where='DynamicsAgent.create (subgoal_value_goal_representation)',
             env_name=env_name_for_phi,
         )
+        val_state_rep = str(config.get('subgoal_value_state_representation', 'full')).lower()
+        assert_phi_goal_obs_indices(
+            int(state_dim),
+            val_state_rep,
+            phi_idxs,
+            where='DynamicsAgent.create (subgoal_value_state_representation)',
+            env_name=env_name_for_phi,
+        )
         idm_hidden = config.get('idm_hidden_dims', (512, 512, 512))
         if isinstance(idm_hidden, str):
             idm_hidden = parse_hidden_dims(idm_hidden)
@@ -1305,6 +1313,7 @@ class DynamicsAgent(_DynamicsAgentCore):
             tuple(int(x) for x in self.config.get('subgoal_value_hidden_dims', (512, 512, 512))),
             layer_norm=bool(self.config.get('subgoal_value_layer_norm', True)),
             goal_representation=str(self.config.get('subgoal_value_goal_representation', 'full')),
+            state_representation=str(self.config.get('subgoal_value_state_representation', 'full')),
             phi_goal_obs_indices=normalize_phi_goal_obs_indices(self.config.get('phi_goal_obs_indices', ())),
             env_name=str(self.config.get('env_name', '')),
         )
@@ -1829,6 +1838,8 @@ def _get_common_config():
             subgoal_value_hidden_dims=(512, 512, 512),
             subgoal_value_layer_norm=True,
             subgoal_value_goal_representation='full',
+            # Oracle PB sets this to 'phi' so borrowed critic weights match V(phi(s),phi(g)).
+            subgoal_value_state_representation='full',
             subgoal_hidden_dims=(512, 512, 512),
             # Distributional subgoal controls (default: TRL + diag_gaussian baseline).
             subgoal_distribution='diag_gaussian',
