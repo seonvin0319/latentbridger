@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "version": "0.2.2",
+  "installed_root": "/home/shchoi/PathBridger-preserved3999/.runtime-0.2.2",
+  "source_tree_cwd_avoided": true,
+  "training_resume_full_checkpoint_exact": true,
+  "run_dir": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/installed_08grmjqd/pathbridger/installed_resume/pathbridger_flow_puzzle-3x3-play-v0_sd001_20261013_134454",
+  "cpu_evaluation_exact_cases": [
+    "p33",
+    "scene"
+  ],
+  "cpu_evaluation_episodes": 10,
+  "scene_supported": true
+}

@@ -1,0 +1,49 @@
+{
+  "passed": true,
+  "version": "0.2.2",
+  "benchmark": {
+    "puzzle_3x3": {
+      "host": {
+        "median_updates_per_s": 156.58089444254082,
+        "peak_live_mib": 359.0966796875,
+        "peak_pool_mib": 546.0,
+        "peak_rss_mib": 1605.40234375
+      },
+      "donate": {
+        "median_updates_per_s": 157.0043665936569,
+        "peak_live_mib": 326.58544921875,
+        "peak_pool_mib": 546.0,
+        "peak_rss_mib": 1653.78515625
+      },
+      "throughput_change_percent": 0.2704494393289236,
+      "peak_live_change_percent": -9.053614891967964,
+      "final_state_metrics_rng_exact": true
+    },
+    "puzzle_4x4": {
+      "host": {
+        "median_updates_per_s": 145.58254274126423,
+        "peak_live_mib": 376.01513671875,
+        "peak_pool_mib": 514.0,
+        "peak_rss_mib": 1649.65625
+      },
+      "donate": {
+        "median_updates_per_s": 145.45864920726126,
+        "peak_live_mib": 335.119384765625,
+        "peak_pool_mib": 514.0,
+        "peak_rss_mib": 1682.3828125
+      },
+      "throughput_change_percent": -0.08510191652797428,
+      "peak_live_change_percent": -10.876091933425014,
+      "final_state_metrics_rng_exact": true
+    }
+  },
+  "scope": "Sampling + transfers + native updates, 10 warmup then 5x500 updates per process, two runs per mode in reversed order; excludes startup/save/evaluation",
+  "measured_updates_per_process": 2500,
+  "presets_exact": 16,
+  "repeated_updates_per_preset": 16,
+  "scene_supported": true,
+  "inference_cpu_cases": 125,
+  "rejected_device_prefetch": "133.51 vs 155.17 updates/s in initial p33 probe; not enabled",
+  "runtime_baseline_commit": "37671549965a89a4652cd5f232ad722dda63e60a",
+  "benchmark_baseline": "Current identical core/sampler with original allocation, compared with training buffer donation"
+}

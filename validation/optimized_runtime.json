@@ -1,0 +1,38 @@
+{
+  "passed": true,
+  "baseline_root": "/home/shchoi/PathBridger-preserved3999/.runtime-0.2.1",
+  "steps": 16,
+  "runs": {
+    "pbf_puzzle_3x3": {
+      "baseline": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbf_puzzle_3x3_baseline/pathbridger_flow_puzzle-3x3-play-v0_sd001_20261013_133955",
+      "optimized": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbf_puzzle_3x3_optimized/pathbridger_flow_puzzle-3x3-play-v0_sd001_20261013_134005",
+      "checkpoint_and_host_rng_exact": true,
+      "all_logged_losses_exact": true,
+      "eval_worker_pending_at_training_exit": true,
+      "resume_exact": true,
+      "disabled_optimizations_exact": true,
+      "resumed": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbf_puzzle_3x3_resumed/pathbridger_flow_puzzle-3x3-play-v0_sd001_20261013_134015",
+      "disabled": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbf_puzzle_3x3_disabled/pathbridger_flow_puzzle-3x3-play-v0_sd001_20261013_134025"
+    },
+    "pbf_puzzle_4x4": {
+      "baseline": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbf_puzzle_4x4_baseline/pathbridger_flow_puzzle-4x4-play-v0_sd001_20261013_134035",
+      "optimized": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbf_puzzle_4x4_optimized/pathbridger_flow_puzzle-4x4-play-v0_sd001_20261013_134044",
+      "checkpoint_and_host_rng_exact": true,
+      "all_logged_losses_exact": true
+    },
+    "pbf_scene": {
+      "baseline": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbf_scene_baseline/pathbridger_flow_scene-play-v0_sd001_20261013_134054",
+      "optimized": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbf_scene_optimized/pathbridger_flow_scene-play-v0_sd001_20261013_134103",
+      "checkpoint_and_host_rng_exact": true,
+      "all_logged_losses_exact": true
+    },
+    "pbg_scene": {
+      "baseline": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbg_scene_baseline/pathbridger_gaussian_scene-play-v0_sd001_20261013_134113",
+      "optimized": "/home/shchoi/PathBridger-preserved3999/validation/optimization_smoke/cli_3zvs7g5n/pathbridger/pbg_scene_optimized/pathbridger_gaussian_scene-play-v0_sd001_20261013_134123",
+      "checkpoint_and_host_rng_exact": true,
+      "all_logged_losses_exact": true
+    }
+  },
+  "cpu_eval_jobs": 2,
+  "cpu_eval_episodes": 10
+}

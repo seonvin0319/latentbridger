@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "presets": [
+    "pbf_puzzle_3x3",
+    "pbf_puzzle_4x4",
+    "pbf_scene",
+    "pbf_antmaze_medium",
+    "pbf_antmaze_large",
+    "pbf_cube_single",
+    "pbf_cube_double",
+    "pbf_cube_triple",
+    "pbg_puzzle_3x3",
+    "pbg_puzzle_4x4",
+    "pbg_scene",
+    "pbg_antmaze_medium",
+    "pbg_antmaze_large",
+    "pbg_cube_single",
+    "pbg_cube_double",
+    "pbg_cube_triple"
+  ],
+  "steps_per_preset": 16,
+  "reuse_train_buffers": true
+}

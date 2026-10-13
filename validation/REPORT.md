@@ -5,7 +5,30 @@
 
 **p33·p44의 고정 입력 계산 동등성 기준을 통과했다.** 초기화·샘플러·Flow 난수 소비·분리 value 계산·bridge 원본 행/평균·update 순서를 이식했다. 코어 10개 파일 중 9개는 내부 import 경로 외에는 실제 원본 Git 객체와 바이트가 같다. 나머지 goal 표현 파일에는 기존 배포판의 scene 레이아웃 `(1,2,2)` 분기만 명시적 예외로 복원했다. 학습 loss·난수·update 수식은 수정하지 않았다. 현재 배포판의 config/CLI를 연결하고, CPU 공통 평가와 전체 상태 저장/재개를 적용했다.
 
-## 학습 검증
+## 0.2.2 최적화 및 main 반영 준비
+
+scene 지원이 있는 `3767154`에서 계속 진행했다. 원복하지 않았으며 `pathbridger_core/`와 추론 함수는 그대로다. 구현 기준은 `e9db39c`, 버퍼 최적화 커밋은 `47ff325`다. 최신 원격 `main`의 `0bf1be4`까지 준비 브랜치에 통합했다. 원격의 transitive 조건과 loss/clipping 수정은 보존 코어에 이미 있으며, 남아 있는 호환 샘플러의 `offset > 1` 수정도 유지했다.
+
+- 학습 루프만 원본 dynamics/critic 함수 body를 각각 같은 JIT 경계에서 buffer donation으로 실행한다. 초기화와 복원 직후에는 공유 버퍼를 한 번 복사한다. 공개 `agent.update`는 기존 동작을 유지한다. `--noreuse_train_buffers`로 버퍼 재사용을 끌 수 있다.
+- 호스트 prefetch 순서와 저장 경계는 유지했다. 불변 dataset/index 메타데이터를 공유하고, 사용하지 않는 validation 데이터와 학습 환경을 해제했다. loss는 tree 단위로 호스트에 가져온다.
+- **16개 설정 모두 fresh 3회 + continuation 16회**의 loss/gradient·전체 가중치·Adam·EMA·난수 및 저장/재개가 기준과 비트 단위로 같다. p33은 원본 100k Adam 상태에서도 비교했다. scene 두 설정의 기준은 기존과 같이 레이아웃 `(1,2,2)`만 고친 원본이다.
+- 실제 CLI에서 p33·p44·scene PBF/PBG 각각 16 update의 전체 checkpoint와 모든 기록된 loss가 설치된 0.2.1과 같다. p33 8→16 재개 및 버퍼 재사용/prefetch를 끈 실행도 같다. CPU 평가 두 작업·10 episode를 완료했고 학습 종료 시 평가 worker는 아직 진행 중이었다.
+- CPU 고정 입력 추론 125건이 같다. 소스 경로 밖에 설치한 0.2.2에서도 p33 재개 checkpoint가 같고, p33/scene 각 5 episode 평가의 전체 결과가 기존 결과와 같다.
+
+아래는 호스트 샘플링·GPU 전송·update를 포함한 측정이다. 각 모드를 별도 프로세스로 10회 warmup 후 500회씩 5구간 실행하고, 실행 순서를 바꿔 두 번 측정했다. 속도는 10구간 중앙값, 메모리는 두 실행 중 큰 peak다. 초기 컴파일·저장·평가는 제외한다. 두 모드는 같은 현재 샘플러를 사용하고 버퍼 소유권만 다르다. 각 프로세스의 측정 2,500회 이후 전체 상태·최종 loss·NumPy RNG 해시도 같다.
+
+| 환경 | 기존 할당 → 재사용 update/s | 처리량 변화 | GPU peak live MiB | 변화 |
+|---|---:|---:|---:|---:|
+| p33 | 156.58 → 157.00 | +0.27% | 359.10 → 326.59 | -9.05% |
+| p44 | 145.58 → 145.46 | -0.09% | 376.02 → 335.12 | -10.88% |
+
+처리량 차이는 작으므로 속도 향상을 주장하지 않는다. GPU allocator의 예약 pool peak는 p33 546 MiB, p44 514 MiB로 두 방식이 같다. 따라서 위의 감소를 `nvidia-smi` 예약 메모리 감소로 해석하지 않는다. 벤치마크 프로세스의 호스트 peak RSS는 재사용 시 p33 약 48 MiB, p44 약 33 MiB 증가했다. 실제 CLI에서 미사용 validation 데이터를 해제한 효과는 별도로 수치화하지 않았다.
+
+배치 전체를 GPU까지 미리 전송하는 후보는 초기 p33 측정에서 155.17 → 133.51 update/s로 느려져 채택하지 않았다. 해당 실험 결과는 `pipeline_p33_device.json`에 남겼다.
+
+`optimization_summary.json`, `optimization_suite.json`, `optimized_*`, `pipeline_puzzle_*`에 결과를 기록했다. `main_integration.json`과 `MAIN_READY.md`에 통합 상태를 기록했다. 로컬 main과 원격 main은 변경하지 않았으며, 원격 main이 준비 브랜치의 조상이어서 fast-forward 반영할 수 있다. 추가 100k/1M 성능 학습은 이 검증에 포함하지 않는다.
+
+## 코어 이식 시 학습 검증 (0.2.1)
 
 - GPU, 배치 1024, seed 1. 초기화 전체 파라미터/Adam/EMA 및 원본 NumPy 샘플링을 비교했다.
 - p33: 원본 100k 체크포인트의 **비영 Adam 상태**에서 16회 연속 비교. 모든 회차의 전체 loss/gradient, 가중치, Adam mu/nu/count, target EMA, 모델 RNG가 비트 단위로 동일하다. 최대 절대차는 모두 0이다.
@@ -86,7 +109,7 @@ RTX 5090, driver 595.84, 동일 JAX/Flax/Optax, deterministic GPU ops + autotune
 - `validation/*equivalence.json`, `validation/inference_cpu.json`: 계산 비교 결과. `dataset_hashes.json`과 `runtime.json`에 입력 파일과 runtime을 기록했다.
 - `validation/scene_layout.json`, `scene_runtime.json`, `scene_regressions.json`, `installed_scene.json`: scene 복원과 회귀 검증.
 - `validation/runtime_smoke.json`, `package.json`, `installed_source_integrity.json`, `installed_commands.json`: CLI/저장/평가/배포 패키지 검증.
-- `dist/pathbridger-0.2.1-py3-none-any.whl`: 배포 wheel. `.runtime-0.2.1/`에 별도 설치하여 현재 저장소 소스를 참조하지 않고 실행한다.
+- `dist/pathbridger-0.2.2-py3-none-any.whl`: 배포 wheel. `.runtime-0.2.2/`에 별도 설치하여 현재 저장소 소스를 참조하지 않고 실행한다.
 - 로컬 명령: `/home/shchoi/.local/bin/pathbridger-3999-train`, `/home/shchoi/.local/bin/pathbridger-3999-eval`.
 
 ```bash

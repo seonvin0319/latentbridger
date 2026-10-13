@@ -1,6 +1,6 @@
 {
   "passed": true,
-  "wheel": "dist/pathbridger-0.2.1-py3-none-any.whl",
+  "wheel": "dist/pathbridger-0.2.2-py3-none-any.whl",
   "isolated_imports": true,
   "packaged_core_hashes_match": true,
   "configs": 16

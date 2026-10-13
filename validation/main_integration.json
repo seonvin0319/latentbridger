@@ -1,0 +1,18 @@
+{
+  "prepared": true,
+  "source_commit": "e9db39cb4417626e48314dbaaa722fa9607c6e1c",
+  "integrated_remote_main": "0bf1be462a063c66dc53a7367e0cfc2aabb3b5cf",
+  "local_main": "e696ceeeb3928b025e66dcccb14a081f66da7389",
+  "remote_main_is_ancestor": true,
+  "merge_tree_equals_candidate": true,
+  "core_and_inference_unchanged_from": "3767154",
+  "incoming_dataset_loader_ast_unchanged": true,
+  "incoming_sampler_fix_retained": "transitive value_offsets > 1 in compatibility sampler",
+  "conflict_resolution": {
+    "README.md": "Keep preserved-core documentation, which includes clipping/mask/loss contract.",
+    "agents/pathbridger.py": "Keep native-core facade; native loss and sampler already include incoming corrections."
+  },
+  "main_worktree_untracked_collisions": [],
+  "main_modified": false,
+  "pushed": false
+}

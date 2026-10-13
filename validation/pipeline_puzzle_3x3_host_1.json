@@ -1,0 +1,37 @@
+{
+  "mode": "host",
+  "env": "puzzle-3x3-play-v0",
+  "distribution": "pbf",
+  "batch_size": 1024,
+  "backend": "gpu",
+  "device": "cuda:0",
+  "measured_updates": 2500,
+  "warmup_updates": 10,
+  "warmup_including_compile_seconds": 3.821293769404292,
+  "trial_seconds": [
+    3.163422215729952,
+    3.1758906384930015,
+    3.168053852394223,
+    3.191407736390829,
+    3.1929494189098477
+  ],
+  "median_updates_per_second": 157.43615159155985,
+  "final_state_sha256": "41169ade4ec3053c3b7058ae2f7a6f9183f9189d7f3819d5e43fcb6f706806cc",
+  "final_metrics_sha256": "0abf263a8e840645a27d48fd684debc6a8d561b5c1d208f7a868c947a23b2197",
+  "final_numpy_rng_sha256": "49c22ddefef85d554aa9a7f48fa61e7cf0e299af2424e17981804cc01a64f8e4",
+  "memory": {
+    "num_allocs": 1220268,
+    "bytes_in_use": 60926464,
+    "peak_bytes_in_use": 374966272,
+    "largest_alloc_size": 268435456,
+    "bytes_limit": 25253904384,
+    "bytes_reserved": 0,
+    "peak_bytes_reserved": 0,
+    "largest_free_block_bytes": 0,
+    "pool_bytes": 572522496,
+    "peak_pool_bytes": 572522496
+  },
+  "peak_rss_kib": 1643932,
+  "xla_flags": "--xla_gpu_autotune_level=0 --xla_gpu_deterministic_ops=true",
+  "preallocate": "false"
+}
