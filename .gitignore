@@ -13,3 +13,5 @@ validation/*.log
 validation/runtime_smoke/
 .runtime/
 validation/installed_smoke/
+validation/scene_smoke/
+.runtime-*/

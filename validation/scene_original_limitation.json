@@ -6,5 +6,6 @@
   "pbg": {
     "same_original_rejection": true,
     "error": "DynamicsAgent.create (subgoal_goal_representation): scene layout: Scene obs_dim=40: ambiguous layout; mid=17 matches multiple (n_cubes, n_buttons, S) tuples: [(0, 1, 15), (1, 2, 2), (1, 1, 6)]."
-  }
+  },
+  "status": "Historical 0.2.0 error reproduction; resolved by explicit scene layout in 0.2.1."
 }

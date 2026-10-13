@@ -10,8 +10,10 @@ separate experiment.
 ## Computation contract
 
 `pathbridger_core/` contains the original dynamics, critic, samplers, networks,
-and training states. Only internal import prefixes changed; `PROVENANCE.json`
-records the upstream and packaged SHA-256 hashes. `agents/pathbridger.py` is a
+and training states. Internal import prefixes changed, and scene retains the
+existing deployment layout `(1, 2, 2)` for 40-dimensional observations. This
+compatibility branch is the only computation exception; `PROVENANCE.json`
+records its exact patch and the upstream/packaged SHA-256 hashes. `agents/pathbridger.py` is a
 thin facade that calls the original dynamics update before the original critic
 update, using the pre-update target value. It does not enclose both in a new JIT.
 
@@ -113,16 +115,22 @@ same reset observations and complete goals. `tests/benchmark_core.py` measures
 warm update throughput and allocator memory in separate processes.
 
 See `validation/REPORT.md` for results, scope and exact commands. Source files
-in `pathbridger_core/` are kept verbatim apart from import prefixes; refactoring
-or formatting them is intentionally deferred.
+in `pathbridger_core/` are kept verbatim apart from import prefixes and the
+declared scene layout branch; other refactoring is deferred.
 
-## Original scene limitation
+## Scene compatibility
 
-The `scene-play-v0` observation has 40 dimensions. The original `3999f37` goal
-layout parser rejects it as ambiguous for both PBF and PBG. This release retains
-that same rejection; scene is **not supported** by this preserved core. The
-other 14 presets are verified below. Fixing scene would be a separate, explicitly
-changed computation path rather than a claim of original-code equivalence.
+`scene-play-v0` has one cube, two buttons, and two states per button. For its
+40-dimensional observation, the original dimension-only parser finds multiple
+possible layouts and rejects initialization. The explicit `(1, 2, 2)` branch
+from the prior deployment is retained, so both PBF and PBG scene presets work.
+
+The resulting seven-dimensional phi is verified against OGBench's own state
+and goal oracle and the previous deployment. Scene update comparisons use
+original `3999f37` plus this stated layout correction; they are not described
+as agreement with the unmodified parser that cannot run scene. Puzzle and other
+environment paths retain the unmodified reference. The exact compatibility
+patch is included in source provenance and each run's provenance.
 
 ## Public configuration presets
 

@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "backend": "cpu",
+  "layout": [
+    1,
+    2,
+    2
+  ],
+  "observations_dim": 40,
+  "phi_dim": 7,
+  "actual_oracle_states_exact": 210,
+  "actual_oracle_goals_exact": 10,
+  "previous_deployment_dataset_rows_exact": 1024,
+  "note": "Independent oracle values come from installed OGBench SceneEnv, not the patched parser."
+}

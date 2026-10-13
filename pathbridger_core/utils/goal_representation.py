@@ -76,6 +76,10 @@ def _parse_scene_compact_layout(obs_dim: int) -> tuple[int, int, int]:
     """
 
     dim = int(obs_dim)
+    # OGBench scene-play-v0: one cube, two binary buttons. Observation
+    # length alone is ambiguous; retain the released environment layout.
+    if dim == 40:
+        return (1, 2, 2)
     if dim < _MANIP_HEAD_DIM + _SCENE_TAIL_DIM:
         raise ValueError(
             f'Scene compact obs_dim={dim} is too small '

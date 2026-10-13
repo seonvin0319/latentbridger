@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "backend": "cpu",
+  "episodes": 5,
+  "result_exactly_matches_source_evaluation": true,
+  "version": "0.2.1",
+  "checkpoint": "/home/shchoi/PathBridger-preserved3999/validation/scene_smoke/pathbridger/pbf/pathbridger_flow_scene-play-v0_sd001_20261013_130911/checkpoints/params_16.pkl"
+}

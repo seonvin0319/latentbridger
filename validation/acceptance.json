@@ -1,14 +1,11 @@
 {
   "core_revision": "3999f3759fe6bfce1e62966bb38f0ce277add843",
   "accepted": true,
-  "exact_training_presets": 14,
+  "exact_training_presets": 16,
   "repeated_steps_p33_p44": 16,
   "exact_cpu_inference_cases": 125,
   "bit_exact": true,
-  "known_original_unsupported": [
-    "pbf/scene",
-    "pbg/scene"
-  ],
+  "known_original_unsupported": [],
   "benchmark": {
     "p33": {
       "original_updates_per_s": 162.81218819001478,
@@ -29,5 +26,11 @@
       "deployment_peak_pool_mib": 514.0
     }
   },
-  "scope": "fixed-input computation equivalence; no full paper reproduction"
+  "scope": "Fixed-input equivalence; scene explicitly restores prior deployment layout; no full paper reproduction",
+  "version": "0.2.1",
+  "unmodified_reference_presets": 14,
+  "scene_corrected_reference_presets": 2,
+  "scene_reference": "3999f37 with only fixed scene layout (1,2,2)",
+  "scene_supported": true,
+  "benchmark_version": "0.2.0"
 }

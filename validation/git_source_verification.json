@@ -12,5 +12,12 @@
     "utils/networks.py": "563c5c038abe68db45e543be681d2388f512b82f5f6a06f6efa7faf7b24fed4b",
     "utils/ogbench_eval_rollout.py": "6e540c9ae72490cc357150161c2e80b59c5d013689511828b371206f49c8c0cb",
     "utils/ogbench_eval_helpers.py": "b8980800d1b56a72c401a107c32bfada67b3c4425c7449587b32c469a7c44512"
-  }
+  },
+  "production_exceptions": [
+    {
+      "file": "utils/goal_representation.py",
+      "description": "scene obs_dim=40 maps to (1,2,2); exact patch in core PROVENANCE.json"
+    }
+  ],
+  "note": "Original source hashes still match original Git objects. Production includes import prefixes and the declared scene compatibility patch."
 }

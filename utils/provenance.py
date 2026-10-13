@@ -25,5 +25,6 @@ def write_provenance(run_dir, agent):
                   backend=jax.default_backend(), devices=[str(d) for d in jax.devices()],
                   xla_flags=os.environ.get('XLA_FLAGS', ''), dynamics=dict(agent.dynamics.config),
                   critic=dict(agent.critic.config), actor_spi=False,
+                  core_compatibility_patches=json.loads((root / 'pathbridger_core/PROVENANCE.json').read_text()).get('compatibility_patches', []),
                   evaluation_protocol='3999-idm-strict-reset-v2')
     (Path(run_dir) / 'provenance.json').write_text(json.dumps(record, indent=2, default=list)+'\n')

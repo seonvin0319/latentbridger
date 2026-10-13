@@ -3,6 +3,7 @@
   "batch_size": 1024,
   "steps": 16,
   "env": "puzzle-4x4-play-v0",
+  "reference": "unmodified 3999f37",
   "xla_flags": "--xla_gpu_autotune_level=0 --xla_gpu_deterministic_ops=true",
   "initialization": {
     "dynamics": {

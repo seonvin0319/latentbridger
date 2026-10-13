@@ -1,10 +1,12 @@
 {
   "passed": true,
+  "version": "0.2.1",
+  "installed_root": "/home/shchoi/PathBridger-preserved3999/.runtime-0.2.1",
   "files": {
     "agents/__init__.py": "688ddd178143f0294aba68b80cca7f1eb4ec78fe63836a223366bec0d8defee3",
     "agents/pathbridger.py": "f7329e55630da6bd6b413244495802f3feaa25b5d7f89c33ab3675749420df74",
     "utils/log_utils.py": "1347fadb7256bcf59d9a23b04813a4546a2829facb90c15e359777e83b1f2a5a",
-    "utils/provenance.py": "1feec223f03abc0cd4b3f07ad8259ebe696040adc56dac7cb681af3a0f2b0c19",
+    "utils/provenance.py": "1622d4d4e9929957cc37fdb2893f67be83e6f0025f7430e7948eb3e8b41a148b",
     "utils/__init__.py": "c641044f8808fd456bcf2d0b64bd620f867c2dc9ff34f8e393a6c48aba69a6bc",
     "utils/eval_worker.py": "5f7bc6c01b5a08656cd72e323be89e8f29d854dd471468fc2f365be3bc911126",
     "utils/datasets.py": "f9dfa18bd8d3df59a54cb4aaa8f96e5365bad9e89f56990d11270a020d82b890",
@@ -47,7 +49,7 @@
     "pathbridger_core/utils/__init__.py": "8b583f603d81a106572fcb07536a600b0744fd8ef84ea4e2a3ee8080bff5783b",
     "pathbridger_core/utils/datasets.py": "e99e1a44f6f9892c7c6799ba47b813511d9f1d17f34ade1e8159d1ee62074190",
     "pathbridger_core/utils/flax_utils.py": "57a692e477f1b977a287845181ec0d35234ec2d6d6ab0ad011c74fdae3b8bcd3",
-    "pathbridger_core/utils/goal_representation.py": "cce235e165e4696ea2f788033f4cc3068015934c693390f80fd1297b7699a3f1",
+    "pathbridger_core/utils/goal_representation.py": "f8d14e2afc81eb046d07af8a39f0c99377a2a0daf9b585d4a580935af3eb7397",
     "pathbridger_core/utils/dynamics.py": "05d2558e2de04f3a84ab7303547980051adcea8f3c2af63ab593540ac48f87db",
     "pathbridger_core/utils/ogbench_eval_helpers.py": "b8980800d1b56a72c401a107c32bfada67b3c4425c7449587b32c469a7c44512",
     "pathbridger_core/utils/networks.py": "563c5c038abe68db45e543be681d2388f512b82f5f6a06f6efa7faf7b24fed4b",

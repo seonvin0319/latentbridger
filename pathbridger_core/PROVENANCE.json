@@ -1,7 +1,7 @@
 {
   "commit": "3999f3759fe6bfce1e62966bb38f0ce277add843",
   "repository": "https://github.com/SChoish/PathBridger_legacy",
-  "transformation": "Only prefix internal from-imports with pathbridger_core.; computation bodies unchanged.",
+  "transformation": "Prefix internal from-imports with pathbridger_core.; preserve original computations except the declared scene layout compatibility branch.",
   "files": {
     "agents/dynamics.py": {
       "original_sha256": "7a60785e00c4aca7ea8e5c000eb43f166dfd8b991cfc56e54586d772acf2407b",
@@ -29,7 +29,7 @@
     },
     "utils/goal_representation.py": {
       "original_sha256": "cce235e165e4696ea2f788033f4cc3068015934c693390f80fd1297b7699a3f1",
-      "vendored_sha256": "cce235e165e4696ea2f788033f4cc3068015934c693390f80fd1297b7699a3f1"
+      "vendored_sha256": "f8d14e2afc81eb046d07af8a39f0c99377a2a0daf9b585d4a580935af3eb7397"
     },
     "utils/networks.py": {
       "original_sha256": "563c5c038abe68db45e543be681d2388f512b82f5f6a06f6efa7faf7b24fed4b",
@@ -43,5 +43,14 @@
       "original_sha256": "b8980800d1b56a72c401a107c32bfada67b3c4425c7449587b32c469a7c44512",
       "vendored_sha256": "b8980800d1b56a72c401a107c32bfada67b3c4425c7449587b32c469a7c44512"
     }
-  }
+  },
+  "compatibility_patches": [
+    {
+      "file": "utils/goal_representation.py",
+      "scope": "Only scene layout parsing for obs_dim=40; other environment branches and all losses/updates unchanged.",
+      "reason": "Retain the existing deployment layout (one cube, two binary buttons).",
+      "replace_before": "    dim = int(obs_dim)\n    if dim < _MANIP_HEAD_DIM + _SCENE_TAIL_DIM:\n",
+      "replace_after": "    dim = int(obs_dim)\n    # OGBench scene-play-v0: one cube, two binary buttons. Observation\n    # length alone is ambiguous; retain the released environment layout.\n    if dim == 40:\n        return (1, 2, 2)\n    if dim < _MANIP_HEAD_DIM + _SCENE_TAIL_DIM:\n"
+    }
+  ]
 }

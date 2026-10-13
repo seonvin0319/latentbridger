@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "completed": [
+    "p33",
+    "p44",
+    "pbf_scene",
+    "pbg_scene"
+  ],
+  "puzzles_reference": "unmodified 3999f37",
+  "scene_reference": "3999f37 with only fixed layout (1,2,2)"
+}

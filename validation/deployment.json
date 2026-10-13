@@ -1,13 +1,15 @@
 {
-  "version": "0.2.0",
+  "version": "0.2.1",
   "branch": "preserve-3999f37-core",
-  "installed_root": "/home/shchoi/PathBridger-preserved3999/.runtime",
-  "wheel": "/home/shchoi/PathBridger-preserved3999/dist/pathbridger-0.2.0-py3-none-any.whl",
-  "wheel_sha256": "75f5d450f30a1c0bc5ca37144f2ac7fec52fc586416ca9334430429685eab3ab",
+  "installed_root": "/home/shchoi/PathBridger-preserved3999/.runtime-0.2.1",
+  "wheel": "/home/shchoi/PathBridger-preserved3999/dist/pathbridger-0.2.1-py3-none-any.whl",
+  "wheel_sha256": "06221f50e8e77f93c710649dc8b9a5e2b6183d24e29fa1369680f7234aefbf1e",
   "local_commands": [
     "/home/shchoi/.local/bin/pathbridger-3999-train",
     "/home/shchoi/.local/bin/pathbridger-3999-eval"
   ],
   "verified": true,
-  "scene_supported": false
+  "scene_supported": true,
+  "previous_installed_root": "/home/shchoi/PathBridger-preserved3999/.runtime",
+  "compatibility_patch": "scene obs_dim=40 -> layout (1,2,2)"
 }

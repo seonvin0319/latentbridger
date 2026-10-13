@@ -27,14 +27,20 @@ from utils.flax_utils import save_agent, restore_agent, load_agent
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def oracle(root, temp):
+def oracle(root, temp, *, reference_scene_layout=False):
     provenance = json.loads((ROOT / 'pathbridger_core/PROVENANCE.json').read_text())
     target = Path(temp) / 'reference3999'
     for rel, entry in provenance['files'].items():
         source = (root / rel).read_text()
         assert hashlib.sha256(source.encode()).hexdigest() == entry['original_sha256'], rel
         production = (ROOT / 'pathbridger_core' / rel).read_text()
-        assert production.replace('from pathbridger_core.', 'from ') == source, rel
+        expected = source
+        for patch in provenance.get('compatibility_patches', []):
+            if patch['file'] == rel:
+                assert expected.count(patch['replace_before']) == 1, rel
+                expected = expected.replace(patch['replace_before'], patch['replace_after'], 1)
+        assert production.replace('from pathbridger_core.', 'from ') == expected, rel
+        assert hashlib.sha256(production.encode()).hexdigest() == entry['vendored_sha256'], rel
         out = target / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(source.replace('from utils.', 'from reference3999.utils.').replace('from agents.', 'from reference3999.agents.'))
@@ -45,6 +51,13 @@ def oracle(root, temp):
     from reference3999.agents.critic import CriticAgent
     from reference3999.utils.datasets import Dataset, PathHGCDataset
     from reference3999.utils.critic_sequence_dataset import CriticSequenceDataset
+    if reference_scene_layout:
+        # The untouched original cannot initialize scene. Use the independently
+        # verified OGBench layout as an explicit reference-only correction;
+        # never describe this reference as unmodified 3999f37 equivalence.
+        import reference3999.utils.goal_representation as goals
+        original_parse = goals._parse_scene_compact_layout
+        goals._parse_scene_compact_layout = lambda dim: (1, 2, 2) if int(dim) == 40 else original_parse(dim)
     return DynamicsAgent, CriticAgent, Dataset, PathHGCDataset, CriticSequenceDataset
 
 
@@ -55,6 +68,8 @@ def exact(a, b, label):
     for i, (x, y) in enumerate(zip(aa, bb)):
         x, y = np.asarray(x), np.asarray(y)
         assert x.shape == y.shape and x.dtype == y.dtype, (label, i, x.shape, y.shape, x.dtype, y.dtype)
+        if np.issubdtype(x.dtype, np.number):
+            assert np.all(np.isfinite(x)) and np.all(np.isfinite(y)), (label, i, 'non-finite')
         assert x.tobytes() == y.tobytes(), (label, i, float(np.max(np.abs(x.astype(float)-y.astype(float)))))
     return {'exact': True, 'leaves': len(aa), 'max_abs': 0.0}
 
@@ -78,12 +93,14 @@ def main():
     p.add_argument('--dataset', required=True)
     p.add_argument('--steps', type=int, default=16)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--reference-scene-layout', action='store_true',
+                   help='Compare scene to original code plus the explicit (1,2,2) layout correction.')
     args = p.parse_args()
     cfg = importlib.import_module(f'configs.{args.distribution}.{args.env}').get_config()
     result = {'backend': jax.default_backend(), 'batch_size': 1024, 'steps': args.steps,
-              'env': cfg.env_name, 'xla_flags': os.environ.get('XLA_FLAGS'), 'initialization': {}, 'trace': []}
+              'env': cfg.env_name, 'reference': '3999f37 + scene layout (1,2,2)' if args.reference_scene_layout else 'unmodified 3999f37', 'xla_flags': os.environ.get('XLA_FLAGS'), 'initialization': {}, 'trace': []}
     with tempfile.TemporaryDirectory() as temp:
-        D, C, Dataset, DS, CS = oracle(args.reference_root, temp)
+        D, C, Dataset, DS, CS = oracle(args.reference_root, temp, reference_scene_layout=args.reference_scene_layout)
         raw = ogbench.load_dataset(args.dataset, compact_dataset=True)
         new_sampler = CoreDataset(raw, cfg)
         dc, cc = new_sampler.dynamics.config, new_sampler.critic.config
