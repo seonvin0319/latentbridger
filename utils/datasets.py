@@ -335,8 +335,8 @@ class PathBridgerDataset:
         Endpoint and value goals follow ``dynamics_p`` and ``critic_p``.  The paper
         defaults select ordinary trajectory-future endpoints and geometric
         value goals, respectively.  Short base pairs use offsets 1--5, and
-        transitive splits are active only for value pairs longer than five
-        transitions.
+        transitive splits are active for value pairs with at least two
+        transitions, so a strictly internal split exists.
         """
 
         batch_size = int(batch_size)
@@ -388,10 +388,10 @@ class PathBridgerDataset:
         base_offsets = self._uniform_positive_offsets(base_max_offsets)
         base_goal_idxs = idxs + base_offsets
 
-        # TRL splits are strictly internal to long pairs.  Invalid rows use the
-        # current state and zero offset; their contribution is removed by the
-        # explicit float mask.
-        transitive_valids = value_offsets > 5
+        # TRL splits are strictly internal to pairs of length at least two.
+        # Invalid rows use the current state and zero offset; their contribution
+        # is removed by the explicit float mask.
+        transitive_valids = value_offsets > 1
         transitive_offsets = np.zeros(batch_size, dtype=np.int64)
         if np.any(transitive_valids):
             max_split_offsets = value_offsets[transitive_valids] - 1
