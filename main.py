@@ -22,6 +22,7 @@ from ml_collections import config_flags
 from agents import PathBridgerAgent
 from envs.env_utils import make_env_and_datasets
 from utils.core_dataset import CoreDataset
+from utils.training import own_training_state, update_training_state
 from utils.async_evaluation import CpuEvaluator
 from utils.flax_utils import resolve_checkpoint, restore_agent, save_agent
 from utils.log_utils import CsvLogger, get_exp_name, get_flag_dict, setup_wandb
@@ -57,6 +58,11 @@ flags.DEFINE_boolean(
     'Overlap host batch sampling with the accelerator update.',
 )
 
+flags.DEFINE_boolean(
+    'reuse_train_buffers', True,
+    'Reuse consumed training-state buffers; disable with --noreuse_train_buffers.',
+)
+
 config_flags.DEFINE_config_file(
     'agent',
     _DEFAULT_CONFIG,
@@ -67,8 +73,8 @@ config_flags.DEFINE_config_file(
 
 def _host_metrics(info) -> dict[str, float]:
     metrics = {}
-    for key, value in info.items():
-        array = np.asarray(jax.device_get(value))
+    for key, value in jax.device_get(info).items():
+        array = np.asarray(value)
         if array.size != 1:
             raise ValueError(f'Training metric {key!r} must be scalar, got shape {array.shape}.')
         metrics[str(key)] = float(array.reshape(()))
@@ -124,11 +130,14 @@ def main(_):
     random.seed(FLAGS.seed)
     np.random.seed(FLAGS.seed)
 
-    env, train_data, _ = make_env_and_datasets(
+    env, train_data, validation_data = make_env_and_datasets(
         str(config.env_name),
         dataset_dir=FLAGS.dataset_dir or None,
     )
     dataset = CoreDataset(train_data, config)
+    # The detached evaluator creates its own environment and needs no dataset.
+    env.close()
+    del env, train_data, validation_data
     # Original main.py reseeds immediately before its full-size initialization batch.
     np.random.seed(FLAGS.seed)
     example_batch, example_critic = dataset.sample(_BATCH_SIZE)
@@ -141,6 +150,9 @@ def main(_):
     )
     if FLAGS.restore_path:
         agent = restore_agent(agent, FLAGS.restore_path, FLAGS.restore_step)
+
+    if FLAGS.reuse_train_buffers:
+        agent = own_training_state(agent)
 
     exp_name = get_exp_name(
         FLAGS.seed,
@@ -205,7 +217,10 @@ def main(_):
             if prefetch_pool is not None and not do_save:
                 next_batch_future = _submit_batch()
 
-            agent, update_info = agent.update(batch)
+            if FLAGS.reuse_train_buffers:
+                agent, update_info = update_training_state(agent, batch)
+            else:
+                agent, update_info = agent.update(batch)
 
             if step % FLAGS.log_interval == 0 or is_final:
                 train_metrics = _host_metrics(update_info)
@@ -227,7 +242,6 @@ def main(_):
             prefetch_pool.shutdown(wait=True)
         train_logger.close()
         cpu_evaluator.finish()
-        env.close()
         if wandb_run is not None:
             wandb_run.finish()
 

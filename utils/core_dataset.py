@@ -8,8 +8,11 @@ from utils.core_config import legacy_configs
 class CoreDataset:
     def __init__(self, data, config):
         dc, cc = legacy_configs(config, data['observations'].shape[-1], data['actions'].shape[-1])
-        self.dynamics = PathHGCDataset(Dataset.create(**dict(data)), dc)
-        self.critic = CriticSequenceDataset(Dataset.create(**dict(data)), cc)
+        # Both native samplers can share the immutable dataset and its index
+        # metadata. Their sampled batches and RNG order remain independent.
+        native_data = Dataset.create(**dict(data))
+        self.dynamics = PathHGCDataset(native_data, dc)
+        self.critic = CriticSequenceDataset(native_data, cc)
         self.valid_starts = np.asarray(np.intersect1d(
             self.dynamics.path_valid_idxs, self.critic.valid_starts, assume_unique=False), dtype=np.int64)
         if not len(self.valid_starts):

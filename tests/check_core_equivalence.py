@@ -22,6 +22,7 @@ import numpy as np
 import ogbench
 from agents import PathBridgerAgent
 from utils.core_dataset import CoreDataset
+from utils.training import own_training_state, update_training_state
 from utils.flax_utils import save_agent, restore_agent, load_agent
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,10 +96,13 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--reference-scene-layout', action='store_true',
                    help='Compare scene to original code plus the explicit (1,2,2) layout correction.')
+    p.add_argument('--reuse-train-buffers', action='store_true')
     args = p.parse_args()
+    def update(agent, batch):
+        return update_training_state(agent, batch) if args.reuse_train_buffers else agent.update(batch)
     cfg = importlib.import_module(f'configs.{args.distribution}.{args.env}').get_config()
     result = {'backend': jax.default_backend(), 'batch_size': 1024, 'steps': args.steps,
-              'env': cfg.env_name, 'reference': '3999f37 + scene layout (1,2,2)' if args.reference_scene_layout else 'unmodified 3999f37', 'xla_flags': os.environ.get('XLA_FLAGS'), 'initialization': {}, 'trace': []}
+              'reuse_train_buffers': args.reuse_train_buffers, 'env': cfg.env_name, 'reference': '3999f37 + scene layout (1,2,2)' if args.reference_scene_layout else 'unmodified 3999f37', 'xla_flags': os.environ.get('XLA_FLAGS'), 'initialization': {}, 'trace': []}
     with tempfile.TemporaryDirectory() as temp:
         D, C, Dataset, DS, CS = oracle(args.reference_root, temp, reference_scene_layout=args.reference_scene_layout)
         raw = ogbench.load_dataset(args.dataset, compact_dataset=True)
@@ -139,9 +143,11 @@ def main():
         result['sampler'] = {'exact': True, 'batches': 1+args.steps, 'numpy_rng_exact': True,
                              'valid_starts': len(valid), 'keys': [sorted(db), sorted(cb)]}
         print('INITIALIZATION_AND_SAMPLER_PASS', flush=True)
+        if args.reuse_train_buffers:
+            a = own_training_state(a)
         # Three updates from fresh initialization, including every original Q head.
         for i, batch in enumerate(batches[:3]):
-            a, _ = a.update(batch)
+            a, _ = update(a, batch)
             d, _ = d.update(batch[0], critic_value_params=c.network.params['modules_target_value'])
             c, _ = c.update(batch[1])
             states(a, d, c, f'fresh {i+1}')
@@ -155,6 +161,8 @@ def main():
                 else:
                     c = flax.serialization.from_state_dict(c, payload)
             states(a, d, c, 'restored original 100k')
+            if args.reuse_train_buffers:
+                a = own_training_state(a)
         result['starting_optimizer_count'] = int(d.network.opt_state[0].count)
         # Native loss paths consume identical internal Flow noise/time keys.
         def gradients(d, c, batch, key):
@@ -170,7 +178,7 @@ def main():
             _, loss_key = jax.random.split(d.rng)
             step_gradients = exact(gf(a.dynamics, a.critic, batch, loss_key),
                                    gf(d, c, batch, loss_key), f'gradient {i+1}')
-            a, info = a.update(batch)
+            a, info = update(a, batch)
             d, di = d.update(batch[0], critic_value_params=c.network.params['modules_target_value'])
             c, ci = c.update(batch[1])
             metrics = {**{'dynamics/'+k: v for k, v in di.items()}, **{'critic/'+k: v for k, v in ci.items()}}
@@ -186,8 +194,8 @@ def main():
         restored = restore_agent(a, checkpoint)
         exact(expected_batch, new_sampler.sample(1024), 'resumed batch')
         rng_equal(expected_rng, np.random.get_state())
-        updated, _ = a.update(batches[0])
-        resumed, _ = restored.update(batches[0])
+        updated, _ = update(own_training_state(a), batches[0])
+        resumed, _ = update(own_training_state(restored), batches[0])
         result['resume'] = states(resumed, updated.dynamics, updated.critic, 'resume update')
         loaded = load_agent(checkpoint)
         result['self_contained_checkpoint'] = states(loaded, a.dynamics, a.critic, 'load without data')

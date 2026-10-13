@@ -57,6 +57,14 @@ One worker prefetches batches by default (`--noasync_prefetch` disables it).
 Sampling stops at a save boundary before host RNG serialization, preserving the
 next batch on resume. `--dataset_dir` retains compact OGBench shard support.
 
+Training reuses consumed state buffers by default. It compiles the original
+dynamics and critic function bodies separately with buffer donation, preserving
+their order, losses, random draws, and JIT boundaries. A one-time storage copy
+separates aliased initialization/restored buffers. `--noreuse_train_buffers`
+selects the original allocation behavior; the public `agent.update` API remains
+non-destructive. The training process also releases its unused validation data
+and environment; the CPU evaluator owns a separate environment.
+
 ## Checkpoints and provenance
 
 A run stores `flags.json`, `provenance.json`, `train.csv`, `eval.csv`, and
@@ -113,6 +121,10 @@ loss/gradient equality, repeated native updates (including Adam and EMA), and
 checkpoint resume. `tests/check_inference.py` checks 125 CPU states using the
 same reset observations and complete goals. `tests/benchmark_core.py` measures
 warm update throughput and allocator memory in separate processes.
+`tests/check_core_equivalence.py --reuse-train-buffers` checks the optimized
+training path. `tests/benchmark_pipeline.py` includes sampling and host-to-device
+transfer. `tests/check_optimized_runtime.py --baseline-root /path/to/v0.2.1`
+compares whole CLI checkpoints, loss logs, resume and CPU evaluation.
 
 See `validation/REPORT.md` for results, scope and exact commands. Source files
 in `pathbridger_core/` are kept verbatim apart from import prefixes and the
