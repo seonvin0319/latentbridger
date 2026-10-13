@@ -1,159 +1,136 @@
-# PathBridger
+# PathBridger: preserved 3999f37 core
 
-This repository contains the actor-free reference implementation of
-**PathBridger: Subgoal Bridges for Offline Goal-Conditioned Reinforcement
-Learning** for state-based OGBench tasks.
+This branch packages the training and inference computation from
+`PathBridger_legacy` commit `3999f3759fe6bfce1e62966bb38f0ce277add843` behind the
+current Python config, CLI, CSV, and checkpoint interfaces. PBF and PBG remain
+available. The acceptance criterion is exact fixed-input computation under the
+same JAX/runtime/device settings. Full paper success-rate reproduction is a
+separate experiment.
 
-**Research team:** [Soohyun Choi](https://github.com/SChoish),
-[Seonvin Cho](https://github.com/seonvin0319), and Prof. Songnam Hong.\n\n**Paper:** [arXiv:2608.29061](https://arxiv.org/abs/2608.29061)
+## Computation contract
 
-PathBridger learns exactly four components:
+`pathbridger_core/` contains the original dynamics, critic, samplers, networks,
+and training states. Only internal import prefixes changed; `PROVENANCE.json`
+records the upstream and packaged SHA-256 hashes. `agents/pathbridger.py` is a
+thin facade that calls the original dynamics update before the original critic
+update, using the pre-update target value. It does not enclose both in a new JIT.
 
-1. a bounded transitive state-goal value and its EMA target,
-2. a value-weighted $K$-step endpoint proposer,
-3. an endpoint-pinned residual state-space bridge, and
-4. an inverse-dynamics model (IDM) that decodes the first five bridge
-   transitions into actions.
+The original initialization names/order, unused sampler draws, Flow key splits,
+separate value forwards, target clipping to `[1e-6, 1]`, Adam states and EMA are
+retained. Transitive samples include all distances greater than one. Bridge
+training keeps rows `[0, 1, 2, 3, 4, 5, K]`, original schedule arithmetic and the
+mean of the five prefix errors plus the zero endpoint error. The full original
+trajectory batch and inference plan remain intact.
 
-Both paper variants are included:
+The original action-critic and target heads are retained, including their
+initialization, loss, optimizer and EMA work, even though the deployed IDM
+policy uses the value head. No SPI actor is trained. Removing these heads or
+simplifying equivalent formulas requires a separate equivalence check.
 
-- **PBF** uses a conditional rectified flow for endpoint displacements.
-- **PBG** uses a conditional diagonal Gaussian.
+## Install and run
 
-This release implements the deterministic paper setting only. It does not
-include the research-only path-weighting or stochastic-bridge extensions. There
-is no neural actor, action-conditioned critic, actor fine-tuning stage, or
-legacy algorithm switch.
-
-## Architecture
-
-![PathBridger bridge-policy architecture](assets/architecture.jpg)
-
-The diagram is the method overview bundled with the PathBridger paper source.
-
-## Layout
-
-```text
-PathBridger/
-├── agents/
-│   └── pathbridger.py       # Complete algorithm and its fixed constants.
-├── assets/
-│   └── architecture.jpg     # Paper's bridge-policy overview.
-├── configs/
-│   ├── pbf/                 # Eight PBF paper configurations.
-│   └── pbg/                 # Eight PBG paper configurations.
-├── envs/
-│   └── env_utils.py         # State-based compact OGBench loading.
-├── utils/
-│   ├── datasets.py          # Path, endpoint, and transitive-value batches.
-│   ├── evaluation.py        # Five-task OGBench environment evaluation.
-│   ├── flax_utils.py        # Unified checkpoints and training state.
-│   ├── goal_representation.py
-│   ├── log_utils.py
-│   └── networks.py
-├── main.py                  # Offline training.
-└── evaluate.py              # Standalone checkpoint evaluation.
-```
-
-The root entry points only assemble experiments. The complete PathBridger
-objective and inference path live in `agents/pathbridger.py`.
-
-## Installation
-
-Python 3.10 or newer is required.
+Use Python >= 3.10 and the JAX build for your accelerator:
 
 ```bash
-git clone https://github.com/SChoish/PathBridger.git
-cd PathBridger
-python -m venv .venv
-source .venv/bin/activate
 pip install -e .
+python main.py --agent=configs/pbf/puzzle_3x3.py --seed=1 --run_group=preserved3999
 ```
 
-Install the JAX build appropriate for the host accelerator before training.
-Weights & Biases is optional:
+`pathbridger-train` and `pathbridger-eval` are equivalent installed entry points.
+Defaults: 1M updates, batch 1024, save/evaluate every 100k, 25 episodes on each of
+five tasks. For a short training-only check:
 
 ```bash
-pip install -e ".[tracking]"
+python main.py --agent=configs/pbf/puzzle_3x3.py --seed=1 \
+  --train_steps=16 --log_interval=4 --save_interval=8 \
+  --eval_interval=0 --noeval_final
 ```
 
-## Training
+Training sets deterministic GPU operations and autotune level 0 unless explicit
+XLA options already select otherwise. Compare only matching runtime options.
+The verified environment is recorded in `validation/runtime.json`; different
+JAX/compiler/hardware versions are not promised to produce identical bits.
 
-The default command trains the paper PBF configuration for
-`antmaze-medium-navigate-v0`:
+One worker prefetches batches by default (`--noasync_prefetch` disables it).
+Sampling stops at a save boundary before host RNG serialization, preserving the
+next batch on resume. `--dataset_dir` retains compact OGBench shard support.
+
+## Checkpoints and provenance
+
+A run stores `flags.json`, `provenance.json`, `train.csv`, `eval.csv`, and
+`checkpoints/params_<step>.pkl`. Provenance includes resolved original configs,
+code hashes, runtime versions, device, and compiler flags. The versioned
+`pathbridger/3999f37/v1` checkpoint contains both original agents, all Adam/EMA
+state, model RNGs, NumPy/Python RNG state, public config and input dimensions.
+Writes are atomic; restore rejects changed configs and incompatible formats.
+CSV retains `value/loss`, `endpoint/loss`, `bridge/loss`, and `idm/loss` aliases
+for comparing component curves. Original dynamics/critic metrics remain available
+under their prefixes. The critic total also includes the preserved action-Q
+loss, so it should not be equated to the earlier four-component total.
 
 ```bash
-python main.py --seed=0
+python main.py --agent=configs/pbf/puzzle_3x3.py --seed=1 \
+  --restore_path=/path/to/checkpoints/params_100000.pkl --train_steps=1000000
 ```
 
-The editable install also provides the equivalent `pathbridger-train` and
-`pathbridger-eval` commands.
+Earlier unified checkpoints cannot resume this core exactly because the
+original action-critic/optimizer state is missing. They are rejected explicitly.
+No existing checkpoint is overwritten or silently converted.
 
-Select any paper configuration with `--agent`:
+## CPU evaluation
+
+Every evaluation checkpoint enters a durable `cpu_eval/job_*.json` queue. One
+separate CPU process drains it while GPU training continues, including after
+training finishes. Results are written to `cpu_eval/result_*.json` and `eval.csv`.
+`worker.log`, per-job `.error` files and `WORKER_DONE.json` expose failures.
+To resume an interrupted evaluation queue:
 
 ```bash
-python main.py \
-  --agent=configs/pbf/cube_double.py \
-  --seed=0 \
-  --run_group=paper
+python utils/eval_worker.py /path/to/run/cpu_eval
+python evaluate.py --checkpoint_dir=/path/to/params_100000.pkl --episodes=25
 ```
 
-Training uses one million gradient steps, a batch size of 1024, and saves every
-100k steps by default. The checkpoints used by the paper protocol—800k, 900k,
-and 1M—are therefore always available.
+The worker and standalone evaluator force the CPU backend and hide CUDA. They
+load the checkpoint metadata without loading training datasets. Standalone
+`--agent` remains optional and, if supplied, must match the checkpoint config.
 
-Host batch sampling is prefetched on one worker by default and can be disabled
-with `--noasync_prefetch`. Checkpoint boundaries preserve the exact sampler RNG
-state used for deterministic resume.
+Both implementations share the agreed `3999-idm-strict-reset-v2` evaluator:
+original IDM chunking/selection, five-step actions, clipping at environment
+step, any-step `info['success']`, full episode limit, reset seed `730000+i`, and
+action-space seed `930000+i`. ManipSpace's Box is cached during evaluation to
+make full goals reproducible. Candidate RNG is episode index within each task,
+reused at every replan, matching the agreed evaluator. Training seed does not
+change evaluation inputs. Episode observation/goal hashes and successes are
+saved. The original ratio candidate score is retained.
 
-An explicit directory containing compact OGBench train/validation shards can be
-passed with `--dataset_dir`. Run `python main.py --helpfull` for runtime and
-logging flags.
+## Verification
 
-Outputs use one unified checkpoint:
+`tests/check_core_equivalence.py` accepts an independent original source archive.
+It verifies source hashes, initial parameters, full sampled batches and RNG,
+loss/gradient equality, repeated native updates (including Adam and EMA), and
+checkpoint resume. `tests/check_inference.py` checks 125 CPU states using the
+same reset observations and complete goals. `tests/benchmark_core.py` measures
+warm update throughput and allocator memory in separate processes.
 
-```text
-exp/pathbridger/<run_group>/<experiment>/
-├── flags.json
-├── train.csv
-├── eval.csv
-└── checkpoints/
-    ├── params_800000.pkl
-    ├── params_900000.pkl
-    └── params_1000000.pkl
-```
+See `validation/REPORT.md` for results, scope and exact commands. Source files
+in `pathbridger_core/` are kept verbatim apart from import prefixes; refactoring
+or formatting them is intentionally deferred.
 
-A unified checkpoint includes the agent, optimizer, JAX key, and host sampler
-RNG states, so interrupted offline training can resume without resetting its
-batch stream.
+## Original scene limitation
 
-## Evaluation
+The `scene-play-v0` observation has 40 dimensions. The original `3999f37` goal
+layout parser rejects it as ambiguous for both PBF and PBG. This release retains
+that same rejection; scene is **not supported** by this preserved core. The
+other 14 presets are verified below. Fixing scene would be a separate, explicitly
+changed computation path rather than a claim of original-code equivalence.
 
-Training and standalone evaluation both use the standard five predefined
-OGBench tasks. Each episode runs to the environment's advertised maximum
-length, actions are clipped to the environment bounds, and success is the
-any-step aggregation of `info["success"]`.
+## Public configuration presets
 
-```bash
-python evaluate.py \
-  --agent=configs/pbf/cube_double.py \
-  --checkpoint_dir=exp/pathbridger/paper/<run>/checkpoints \
-  --checkpoint_step=1000000 \
-  --episodes=50
-```
-
-For an exact `params_<step>.pkl` path, the step is inferred from the filename;
-for a checkpoint directory, pass `--checkpoint_step`.
-
-The configuration supplies the paper's endpoint candidate count $N$ and
-sampling temperature $T$.
-
-## Paper configurations
-
-The following values are transcribed from the environment-specific settings
-table in the paper supplementary material. $c_{\mathrm{sg}}$ is the endpoint
-value-weight scale and $\lambda$ is the value distance-weight exponent. $N$ and
-$T$ are the Best-of-$N$ candidate count and sampling temperature.
+The following environment presets are retained from the existing distribution.
+Their numeric settings are not retuned by this change. `discount` controls the
+critic; the dynamics sampler retains its original 0.99 default. Mixtures use
+`(current, geometric future, uniform future, random)`; `dynamics_p=(0,0,1,0)` and
+`critic_p=(0,1,0,0)` map directly to the original sampling options.
 
 ### PBF
 
@@ -180,51 +157,3 @@ $T$ are the Best-of-$N$ candidate count and sampling temperature.
 | `pbg/puzzle_3x3.py` | puzzle-3x3-play-v0 | 40 | 0.99 | 10 | 0.5 | 2 | 0.25 |
 | `pbg/puzzle_4x4.py` | puzzle-4x4-play-v0 | 40 | 0.995 | 10 | 2.0 | 32 | 0.5 |
 | `pbg/scene.py` | scene-play-v0 | 40 | 0.99 | 5 | 1.0 | 16 | 0.5 |
-
-## Goal-sampling mixes
-
-Goal probabilities use the paper's four-tuple order
-`(p_cur, p_geom, p_traj, p_rand)`. There is no separate geometric-sampling
-boolean.
-
-- `dynamics_p=(0, 0, 1, 0)` samples ordinary trajectory-future goals for the
-  endpoint/subgoal dynamics branch (the paper table labels this mix “Subgoal”).
-- `critic_p=(0, 1, 0, 0)` samples geometric future goals for the scalar
-  transitive value.
-
-`p_geom` and `p_traj` are mutually exclusive future-goal implementations.
-Because the final transitive value loss requires an ordered in-trajectory pair,
-`critic_p` must place all probability on either `p_geom` or `p_traj`.
-
-## Fixed implementation choices
-
-The following are code constants rather than configuration options:
-
-- three 512-unit GELU layers with layer normalization,
-- Adam with learning rate $3\times10^{-4}$,
-- value expectile 0.7 and EMA rate 0.005,
-- base and action horizons of 5,
-- endpoint-weight cap 5,
-- eight Euler steps for PBF,
-- unit coefficients for the value, endpoint, bridge, and IDM losses.
-
-Bridge interpolation, endpoint mask, and product endpoint score:
-
-$$
-\alpha_i=(i/K)^{0.8},\qquad
-m_i=\frac{i(K-i)}{K^2},\qquad
-V(s,z)\,V(z,g).
-$$
-
-Distance weighting uses the target value without an undocumented clip and is
-applied to both base and transitive value losses.
-
-The dataset sampler transfers only the five supervised bridge-prefix targets
-with each batch (`[B, 5, D]`), rather than the full path (`[B, K+1, D]`). During
-inference, the model likewise constructs only the six states consumed by the
-five-step IDM policy.
-
-To reproduce the reported experiments, training keeps the paper sampler's
-close-goal behavior: when a sampled final goal occurs before $t+K$, the endpoint
-is clipped to that goal and the five supervised bridge-prefix targets are
-padded with the goal state.

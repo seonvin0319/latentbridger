@@ -1,0 +1,10 @@
+{
+  "/home/shchoi/.ogbench/data/antmaze-large-navigate-v0-val.npz": "e9a4126825faefb57c34c29f1ee423858dbc4b6f71d9a9846a8b8bdb908b44a1",
+  "/home/shchoi/.ogbench/data/antmaze-medium-navigate-v0-val.npz": "9864ec00fe9e4afb05a012877f40b87931eb7fc21ae6e4ab4fe7dcdcc0a3490a",
+  "/home/shchoi/.ogbench/data/cube-double-play-v0-val.npz": "b1fcdf4bd40750351a58d0d491d6be198366ce898f0c6a2e4cb5db331966013e",
+  "/home/shchoi/.ogbench/data/cube-single-play-v0-val.npz": "96d07401bdebdc3f0ea6d56ed1333863e0962f441483adc2c43b83105046eb00",
+  "/home/shchoi/.ogbench/data/cube-triple-play-v0-val.npz": "bd6cb3817fc464d7afc50bd90d766f353bc5b8d097579c70afe680a9aa0404a6",
+  "/home/shchoi/.ogbench/data/puzzle-3x3-play-v0-val.npz": "897a3f491decf46d72ea73425dc9b2c969530eca190708d763e632850b856550",
+  "/home/shchoi/.ogbench/data/puzzle-4x4-play-v0-val.npz": "472324d739ed9d029600fd112738d2602b15a7a3039d03ce91265b65c5943d4d",
+  "/home/shchoi/.ogbench/data/scene-play-v0-val.npz": "6700c42a1602fa4a9457414395613d9d8ad6350181662a79751ca02dc0423cb2"
+}

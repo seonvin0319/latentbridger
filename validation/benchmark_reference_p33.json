@@ -1,0 +1,34 @@
+{
+  "engine": "reference",
+  "env": "puzzle-3x3-play-v0",
+  "backend": "gpu",
+  "device": "cuda:0",
+  "batch_size": 1024,
+  "measured_updates": 500,
+  "warmup_updates": 10,
+  "warmup_including_compile_seconds": 4.124084569513798,
+  "trial_seconds_per_100_updates": [
+    0.6089648017659783,
+    0.6138745900243521,
+    0.6142046311870217,
+    0.6144409533590078,
+    0.6147756846621633
+  ],
+  "median_updates_per_second": 162.81218819001478,
+  "sampler_seconds_per_batch": 0.0013533949386328459,
+  "memory": {
+    "num_allocs": 239902,
+    "bytes_in_use": 95632640,
+    "peak_bytes_in_use": 388711168,
+    "largest_alloc_size": 268435456,
+    "bytes_limit": 25253904384,
+    "bytes_reserved": 0,
+    "peak_bytes_reserved": 0,
+    "largest_free_block_bytes": 0,
+    "pool_bytes": 572522496,
+    "peak_pool_bytes": 572522496
+  },
+  "peak_rss_kib": 1577232,
+  "xla_flags": "--xla_gpu_autotune_level=0 --xla_gpu_deterministic_ops=true",
+  "preallocate": "false"
+}

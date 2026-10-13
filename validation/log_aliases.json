@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "aliases": {
+    "value/loss": 1.2618811130523682,
+    "endpoint/loss": 3.758653163909912,
+    "bridge/loss": 5.871131420135498,
+    "idm/loss": 1.5391000509262085
+  },
+  "source": "original native update metrics from CLI smoke"
+}

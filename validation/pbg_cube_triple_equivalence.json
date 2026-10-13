@@ -1,0 +1,184 @@
+{
+  "backend": "gpu",
+  "batch_size": 1024,
+  "steps": 3,
+  "env": "cube-triple-play-v0",
+  "xla_flags": "--xla_gpu_autotune_level=0 --xla_gpu_deterministic_ops=true",
+  "initialization": {
+    "dynamics": {
+      "exact": true,
+      "leaves": 169,
+      "max_abs": 0.0
+    },
+    "critic": {
+      "exact": true,
+      "leaves": 183,
+      "max_abs": 0.0
+    }
+  },
+  "trace": [
+    {
+      "step": 1,
+      "gradients": {
+        "exact": true,
+        "leaves": 210,
+        "max_abs": 0.0
+      },
+      "states": {
+        "dynamics": {
+          "exact": true,
+          "leaves": 169,
+          "max_abs": 0.0
+        },
+        "critic": {
+          "exact": true,
+          "leaves": 183,
+          "max_abs": 0.0
+        }
+      },
+      "metrics": {
+        "exact": true,
+        "leaves": 104,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "step": 2,
+      "gradients": {
+        "exact": true,
+        "leaves": 210,
+        "max_abs": 0.0
+      },
+      "states": {
+        "dynamics": {
+          "exact": true,
+          "leaves": 169,
+          "max_abs": 0.0
+        },
+        "critic": {
+          "exact": true,
+          "leaves": 183,
+          "max_abs": 0.0
+        }
+      },
+      "metrics": {
+        "exact": true,
+        "leaves": 104,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "step": 3,
+      "gradients": {
+        "exact": true,
+        "leaves": 210,
+        "max_abs": 0.0
+      },
+      "states": {
+        "dynamics": {
+          "exact": true,
+          "leaves": 169,
+          "max_abs": 0.0
+        },
+        "critic": {
+          "exact": true,
+          "leaves": 183,
+          "max_abs": 0.0
+        }
+      },
+      "metrics": {
+        "exact": true,
+        "leaves": 104,
+        "max_abs": 0.0
+      }
+    }
+  ],
+  "sampler": {
+    "exact": true,
+    "batches": 4,
+    "numpy_rng_exact": true,
+    "valid_starts": 292500,
+    "keys": [
+      [
+        "actions",
+        "high_actor_goal_idxs",
+        "high_actor_goals",
+        "high_actor_target_idxs",
+        "high_actor_targets",
+        "low_actor_goals",
+        "masks",
+        "next_observations",
+        "observations",
+        "rewards",
+        "terminals",
+        "trajectory_indices",
+        "trajectory_segment",
+        "trajectory_start_indices",
+        "trajectory_terminal_indices",
+        "valids",
+        "value_goals"
+      ],
+      [
+        "action_chunk_actions",
+        "action_chunk_horizon_per_sample",
+        "action_chunk_masks",
+        "action_chunk_next_observations",
+        "action_chunk_rewards",
+        "actions",
+        "full_chunk_actions",
+        "full_chunk_horizon",
+        "full_chunk_masks",
+        "full_chunk_next_observations",
+        "full_chunk_rewards",
+        "next_observations",
+        "observations",
+        "q_goal_offsets",
+        "q_goals",
+        "trans_v_left_goals",
+        "trans_v_right_goals",
+        "trans_v_right_observations",
+        "trans_v_split_observations",
+        "trans_v_split_offsets",
+        "trans_v_valid_mask",
+        "valids",
+        "value_base_goals",
+        "value_base_offsets",
+        "value_goals",
+        "value_offsets"
+      ]
+    ]
+  },
+  "fresh_updates_exact": 3,
+  "starting_optimizer_count": 3,
+  "loss_metrics_and_gradients": {
+    "exact": true,
+    "leaves": 210,
+    "max_abs": 0.0
+  },
+  "resume": {
+    "dynamics": {
+      "exact": true,
+      "leaves": 169,
+      "max_abs": 0.0
+    },
+    "critic": {
+      "exact": true,
+      "leaves": 183,
+      "max_abs": 0.0
+    }
+  },
+  "self_contained_checkpoint": {
+    "dynamics": {
+      "exact": true,
+      "leaves": 169,
+      "max_abs": 0.0
+    },
+    "critic": {
+      "exact": true,
+      "leaves": 183,
+      "max_abs": 0.0
+    }
+  },
+  "reject_config_drift": true,
+  "passed": true
+}

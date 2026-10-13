@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pathbridger"
-version = "0.1.0"
+version = "0.2.0"
 description = "PathBridger for offline goal-conditioned reinforcement learning."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,7 +34,7 @@ py-modules = ["main", "evaluate"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agents*", "configs*", "envs*", "utils*"]
+include = ["agents*", "configs*", "envs*", "utils*", "pathbridger_core*"]
 
 [tool.setuptools.data-files]
 "share/pathbridger/assets" = ["assets/architecture.jpg"]
@@ -45,3 +45,6 @@ line-length = 120
 
 [tool.ruff.format]
 quote-style = "single"
+
+[tool.setuptools.package-data]
+pathbridger_core = ["PROVENANCE.json"]

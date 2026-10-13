@@ -1,0 +1,69 @@
+{
+  "checkpoint_step": 2,
+  "env_name": "puzzle-3x3-play-v0",
+  "endpoint_distribution": "flow",
+  "eval_num_candidates": 32,
+  "eval_temperature": 1.0,
+  "backend": "cpu",
+  "protocol": "3999-idm-strict-reset-v2",
+  "episodes": [
+    {
+      "episode": 0,
+      "task_id": 1,
+      "reset_seed": 730000,
+      "action_space_seed": 930000,
+      "observation_sha256": "47a7bbf87bc1f0cc52b903743cfed5a44dba80536e9d0b7459ff67eb01de2792",
+      "goal_sha256": "33585a4cda57073d95f4ff6616e4d10ea6ffb43c231add0fafd29d757e673ff6",
+      "success": false,
+      "steps": 500
+    },
+    {
+      "episode": 1,
+      "task_id": 2,
+      "reset_seed": 730001,
+      "action_space_seed": 930001,
+      "observation_sha256": "feede931d2079e5a1fc8573eb416c29c5b1c158cfa38019f91a8ec580a601063",
+      "goal_sha256": "5088d22fd114be7a75f0b21155169ab4f4cf9888503358a34a689aac94329c76",
+      "success": false,
+      "steps": 500
+    },
+    {
+      "episode": 2,
+      "task_id": 3,
+      "reset_seed": 730002,
+      "action_space_seed": 930002,
+      "observation_sha256": "d5a5366b6bd83f7cbac800ff1e09988fc53da6f88fa89f0b27b12ff61134d486",
+      "goal_sha256": "8d836b90756fa379a934186ed969d9d032bebf6b8fbbf53cc84f5d385aec0928",
+      "success": false,
+      "steps": 500
+    },
+    {
+      "episode": 3,
+      "task_id": 4,
+      "reset_seed": 730003,
+      "action_space_seed": 930003,
+      "observation_sha256": "1ee017809271b14cfd54ddb2bbf6070987dc0b602aef76ee974f85a1023011a7",
+      "goal_sha256": "dcbe08a9cfa461b24e3dafc6e2d1898a11ed8493e6ee28d26d5696c163e497be",
+      "success": false,
+      "steps": 500
+    },
+    {
+      "episode": 4,
+      "task_id": 5,
+      "reset_seed": 730004,
+      "action_space_seed": 930004,
+      "observation_sha256": "8095322f7e171e4c826aa57a7b22aaaddf9dfe687783ba87071ba11528636edc",
+      "goal_sha256": "b6fa669d2a6952206cb1883aeacbc4358768ad6b427e013e6d08fde3ed8e5984",
+      "success": false,
+      "steps": 500
+    }
+  ],
+  "evaluation/task_1_success": 0.0,
+  "evaluation/task_2_success": 0.0,
+  "evaluation/task_3_success": 0.0,
+  "evaluation/task_4_success": 0.0,
+  "evaluation/task_5_success": 0.0,
+  "evaluation/overall_success": 0.0,
+  "evaluation/num_tasks": 5,
+  "evaluation/episodes_per_task": 1
+}

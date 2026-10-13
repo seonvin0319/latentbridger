@@ -1,0 +1,9 @@
+# Verified Python 3.11.15; install GPU JAX support for the host.
+jax==0.10.2
+jaxlib==0.10.2
+flax==0.12.8
+optax==0.2.8
+numpy==2.4.6
+ogbench==1.1.0
+gymnasium==1.4.0
+ml-collections==1.1.0

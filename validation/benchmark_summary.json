@@ -1,0 +1,20 @@
+{
+  "p33": {
+    "original_updates_per_s": 162.81218819001478,
+    "deployment_updates_per_s": 162.721511582103,
+    "throughput_change_percent": -0.05569399251974527,
+    "original_peak_live_mib": 370.703857421875,
+    "deployment_peak_live_mib": 370.168701171875,
+    "original_peak_pool_mib": 546.0,
+    "deployment_peak_pool_mib": 546.0
+  },
+  "p44": {
+    "original_updates_per_s": 154.0366562462783,
+    "deployment_updates_per_s": 153.78828804676454,
+    "throughput_change_percent": -0.16123967214445312,
+    "original_peak_live_mib": 406.631591796875,
+    "deployment_peak_live_mib": 404.998291015625,
+    "original_peak_pool_mib": 514.0,
+    "deployment_peak_pool_mib": 514.0
+  }
+}

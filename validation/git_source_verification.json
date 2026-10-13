@@ -1,0 +1,16 @@
+{
+  "commit": "3999f3759fe6bfce1e62966bb38f0ce277add843",
+  "all_match_git_objects": true,
+  "files": {
+    "agents/dynamics.py": "7a60785e00c4aca7ea8e5c000eb43f166dfd8b991cfc56e54586d772acf2407b",
+    "agents/critic.py": "778fd40fbdcc8db2cfa7cd993833e50c60f5bc917011bbac3e0930da01cfb693",
+    "utils/datasets.py": "e99e1a44f6f9892c7c6799ba47b813511d9f1d17f34ade1e8159d1ee62074190",
+    "utils/critic_sequence_dataset.py": "90fdc384b4be5d72f07e99a3e451bf42d2001ee6679379d5a6714495094dbc52",
+    "utils/flax_utils.py": "57a692e477f1b977a287845181ec0d35234ec2d6d6ab0ad011c74fdae3b8bcd3",
+    "utils/dynamics.py": "05d2558e2de04f3a84ab7303547980051adcea8f3c2af63ab593540ac48f87db",
+    "utils/goal_representation.py": "cce235e165e4696ea2f788033f4cc3068015934c693390f80fd1297b7699a3f1",
+    "utils/networks.py": "563c5c038abe68db45e543be681d2388f512b82f5f6a06f6efa7faf7b24fed4b",
+    "utils/ogbench_eval_rollout.py": "6e540c9ae72490cc357150161c2e80b59c5d013689511828b371206f49c8c0cb",
+    "utils/ogbench_eval_helpers.py": "b8980800d1b56a72c401a107c32bfada67b3c4425c7449587b32c469a7c44512"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "train_steps": 2,
+  "loss_aliases_match_native": true,
+  "eval_backend": "cpu",
+  "eval_episodes": 5,
+  "checkpoint": "/home/shchoi/PathBridger-preserved3999/validation/installed_smoke/pathbridger/installed/pathbridger_flow_puzzle-3x3-play-v0_sd001_20261013_125337/checkpoints/params_2.pkl",
+  "commands": [
+    "/home/shchoi/.local/bin/pathbridger-3999-train",
+    "/home/shchoi/.local/bin/pathbridger-3999-eval"
+  ]
+}

@@ -1,100 +1,64 @@
-"""Evaluate one unified PathBridger checkpoint on the five OGBench tasks."""
-
+"""CPU evaluation of a preserved-core checkpoint; no training dataset needed."""
 from __future__ import annotations
-
+import os
+os.environ['JAX_PLATFORMS'] = 'cpu'
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
 import json
 from pathlib import Path
-
 from absl import app, flags
 from ml_collections import config_flags
-
-from agents import PathBridgerAgent
-from envs.env_utils import make_env_and_datasets
-from utils.datasets import PathBridgerDataset
-from utils.evaluation import DEFAULT_TASK_IDS, evaluate
-from utils.flax_utils import resolve_checkpoint, restore_agent
+from utils.evaluation import evaluate, PROTOCOL
+from utils.flax_utils import load_agent, resolve_checkpoint
 
 FLAGS = flags.FLAGS
-_DEFAULT_CONFIG = str(
-    Path(__file__).resolve().parent / 'configs' / 'pbf' / 'antmaze_medium.py'
-)
+flags.DEFINE_string('checkpoint_dir', '', 'Directory or exact params_<step>.pkl file.')
+flags.DEFINE_integer('checkpoint_step', 0, 'Step, inferred for an exact checkpoint file.')
+flags.DEFINE_integer('episodes', 25, 'Episodes per task.')
+flags.DEFINE_integer('seed', 0, 'Accepted for compatibility; strict paired evaluation has fixed seeds.')
+flags.DEFINE_string('dataset_dir', '', 'Accepted for compatibility; evaluation does not load datasets.')
+flags.DEFINE_string('output_path', '', 'Optional result JSON.')
+config_flags.DEFINE_config_file('agent', None, 'Optional config; must match checkpoint metadata.', lock_config=False)
 
-flags.DEFINE_string('checkpoint_dir', '', 'Checkpoint directory or exact .pkl file.')
-flags.DEFINE_integer(
-    'checkpoint_step',
-    0,
-    'Checkpoint step; required for a directory and inferred from an exact params_<step>.pkl file.',
-)
-flags.DEFINE_string('dataset_dir', '', 'Optional OGBench dataset directory.')
-flags.DEFINE_integer('episodes', 50, 'Episodes for each of the five predefined tasks.')
-flags.DEFINE_integer('seed', 0, 'Evaluation seed.')
-flags.DEFINE_string('output_path', '', 'Optional JSON result path.')
 
-config_flags.DEFINE_config_file(
-    'agent',
-    _DEFAULT_CONFIG,
-    'PathBridger paper-reproduction config used by the checkpoint.',
-    lock_config=False,
-)
+def evaluate_checkpoint(path, step=0, episodes=25):
+    import jax
+    import ogbench
+    if jax.default_backend() != 'cpu':
+        raise RuntimeError('Evaluation must run in its own JAX_PLATFORMS=cpu process.')
+    path, step = resolve_checkpoint(path, step)
+    agent = load_agent(path, step)
+    cfg = agent.config
+    env = ogbench.make_env_and_datasets(cfg['env_name'], env_only=True)
+    records = []
+    try:
+        env.reset()  # Match the agreed evaluator's preliminary environment reset.
+        metrics = evaluate(agent, env, episodes_per_task=episodes,
+                           num_candidates=cfg['eval_num_candidates'], temperature=cfg['eval_temperature'], records=records)
+    finally:
+        env.close()
+    return dict(checkpoint_step=step, env_name=cfg['env_name'], endpoint_distribution=cfg['endpoint_distribution'],
+                eval_num_candidates=cfg['eval_num_candidates'], eval_temperature=cfg['eval_temperature'],
+                backend=jax.default_backend(), protocol=PROTOCOL, episodes=records,
+                **{'evaluation/'+k: v for k, v in metrics.items()})
 
 
 def main(_):
     if not FLAGS.checkpoint_dir:
         raise ValueError('checkpoint_dir is required.')
-    if FLAGS.checkpoint_step < 0:
-        raise ValueError('checkpoint_step cannot be negative.')
-    if FLAGS.episodes < 1:
-        raise ValueError('episodes must be at least 1.')
-    _, checkpoint_step = resolve_checkpoint(
-        FLAGS.checkpoint_dir,
-        FLAGS.checkpoint_step,
-    )
-
-    config = FLAGS.agent
-    env, train_data, _ = make_env_and_datasets(
-        str(config.env_name),
-        dataset_dir=FLAGS.dataset_dir or None,
-    )
-    dataset = PathBridgerDataset(train_data, config)
-    example_batch = dataset.sample(1)
-    agent = PathBridgerAgent.create(
-        FLAGS.seed,
-        example_batch['observations'],
-        example_batch['actions'],
-        config,
-    )
-    agent = restore_agent(agent, FLAGS.checkpoint_dir, FLAGS.checkpoint_step)
-
-    metrics = evaluate(
-        agent,
-        env,
-        task_ids=DEFAULT_TASK_IDS,
-        episodes_per_task=FLAGS.episodes,
-        num_candidates=int(config.eval_num_candidates),
-        temperature=float(config.eval_temperature),
-        seed=FLAGS.seed,
-    )
-    result = {
-        'checkpoint_step': checkpoint_step,
-        'env_name': str(config.env_name),
-        'endpoint_distribution': str(config.endpoint_distribution),
-        'eval_num_candidates': int(config.eval_num_candidates),
-        'eval_temperature': float(config.eval_temperature),
-        **{f'evaluation/{key}': value for key, value in metrics.items()},
-    }
-    text = json.dumps(result, indent=2, sort_keys=True)
+    if FLAGS.agent is not None:
+        agent = load_agent(FLAGS.checkpoint_dir, FLAGS.checkpoint_step)
+        if json.dumps(FLAGS.agent.to_dict(), sort_keys=True) != json.dumps(dict(agent.config), sort_keys=True):
+            raise ValueError('Supplied agent config does not match checkpoint metadata.')
+    result = evaluate_checkpoint(FLAGS.checkpoint_dir, FLAGS.checkpoint_step, FLAGS.episodes)
+    text = json.dumps(result, indent=2)
     print(text)
     if FLAGS.output_path:
-        output_path = Path(FLAGS.output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with output_path.open('w', encoding='utf-8') as file:
-            file.write(text)
-            file.write('\n')
+        path = Path(FLAGS.output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text+'\n')
 
 
 def run():
-    """Run the command-line evaluation entry point."""
-
     app.run(main)
 
 

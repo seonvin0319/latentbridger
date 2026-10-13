@@ -8,3 +8,8 @@ build/
 dist/
 exp/
 wandb/
+
+validation/*.log
+validation/runtime_smoke/
+.runtime/
+validation/installed_smoke/

@@ -1,0 +1,12 @@
+{
+  "completed": [
+    "pbg_puzzle_3x3_equivalence",
+    "pbg_puzzle_4x4_equivalence",
+    "pbg_antmaze_medium_equivalence",
+    "pbg_antmaze_large_equivalence",
+    "pbg_cube_single_equivalence",
+    "pbg_cube_double_equivalence",
+    "pbg_cube_triple_equivalence"
+  ],
+  "remaining": 0
+}

@@ -1,173 +1,99 @@
-"""State-based multitask OGBench evaluation."""
-
-from __future__ import annotations
-
-from collections.abc import Mapping, Sequence
-from typing import Any
-
+"""Shared strict-reset CPU evaluation used in the controlled comparisons."""
+from contextlib import contextmanager
+import hashlib
 import jax
 import numpy as np
+from utils.reference_evaluation import _evaluate_env_tasks
 
 DEFAULT_TASK_IDS = (1, 2, 3, 4, 5)
-ACTION_CHUNK_HORIZON = 5
+PROTOCOL = '3999-idm-strict-reset-v2'
+
+# Preserve the agreed evaluator's individual compilation boundaries.
+_infer = jax.jit(lambda d, c, o, g, k: d.infer_subgoal_for_eval(o, g, critic_agent=c, rng=k))
+_idm = jax.jit(lambda d, t: d._idm_actions_from_trajectories(t, 5))
 
 
-def _max_episode_steps(env: Any) -> int:
-    spec = getattr(env, 'spec', None)
-    max_steps = getattr(spec, 'max_episode_steps', None)
-    if max_steps is None:
-        max_steps = getattr(env, '_max_episode_steps', None)
-    if max_steps is None:
-        raise ValueError('Evaluation environment must expose `spec.max_episode_steps`.')
-    max_steps = int(max_steps)
-    if max_steps < 1:
-        raise ValueError(f'Environment max episode length must be positive, got {max_steps}.')
-    return max_steps
+class EvalDynamics:
+    def __init__(self, dynamics, num_candidates, temperature):
+        cfg = dynamics.config.copy(add_or_replace={
+            'subgoal_eval_num_samples': int(num_candidates),
+            'subgoal_temperature': float(temperature), 'subgoal_eval_seed': 0})
+        self.d = dynamics.replace(config=cfg)
+        self.config = self.d.config
+
+    def infer_subgoal_for_eval(self, o, g, critic_agent=None, rng=None):
+        return _infer(self.d, critic_agent, o, g, rng)
+
+    def plan(self, *args, **kwargs):
+        return self.d.plan(*args, **kwargs)
+
+    def _idm_actions_from_trajectories(self, trajectory, horizon):
+        if horizon != 5:
+            raise ValueError('The released policy executes five-step IDM chunks.')
+        return _idm(self.d, trajectory)
 
 
-def _info_success(info: Any) -> bool:
-    if not isinstance(info, Mapping):
-        return False
-    value = np.asarray(info.get('success', False))
-    return bool(np.any(value))
+@contextmanager
+def stable_action_space():
+    # OGBench ManipSpace creates a new unseeded Box on every property access.
+    # Scope the cache patch to this single-process evaluation and restore it.
+    from ogbench.manipspace.envs.manipspace_env import ManipSpaceEnv
+    original = ManipSpaceEnv.action_space
+    def cached(env):
+        if '_pb_eval_action_space' not in env.__dict__:
+            env.__dict__['_pb_eval_action_space'] = original.fget(env)
+        return env.__dict__['_pb_eval_action_space']
+    ManipSpaceEnv.action_space = property(cached)
+    try:
+        yield
+    finally:
+        ManipSpaceEnv.action_space = original
 
 
-def _sample_action_chunk(
-    agent: Any,
-    observation: np.ndarray,
-    goal: np.ndarray,
-    *,
-    num_candidates: int,
-    temperature: float,
-    seed,
-) -> np.ndarray:
-    action_chunks = agent.sample_action_chunks(
-        observations=observation.reshape(1, -1),
-        goals=goal.reshape(1, -1),
-        num_candidates=num_candidates,
-        temperature=temperature,
-        seed=seed,
-    )
-    action_chunks = np.asarray(jax.device_get(action_chunks), dtype=np.float32)
-    if action_chunks.ndim != 3 or action_chunks.shape[0] != 1:
-        raise ValueError(
-            'agent.sample_action_chunks must return shape [1, 5, action_dim], '
-            f'got {action_chunks.shape}.'
-        )
-    action_chunk = np.squeeze(action_chunks, axis=0)
-    if action_chunk.shape[0] != ACTION_CHUNK_HORIZON:
-        raise ValueError(
-            f'PathBridger executes {ACTION_CHUNK_HORIZON}-step action chunks, got shape {action_chunk.shape}.'
-        )
-    return action_chunk
+class RecordedEnv:
+    def __init__(self, env):
+        self.env = env
+        self.records = []
+
+    def __getattr__(self, name):
+        return getattr(self.env, name)
+
+    def reset(self, **kwargs):
+        index = len(self.records)
+        self.env.action_space.seed(930000 + index)
+        kwargs['seed'] = 730000 + index
+        obs, info = self.env.reset(**kwargs)
+        self.records.append(dict(episode=index, task_id=int(kwargs['options']['task_id']),
+            reset_seed=730000+index, action_space_seed=930000+index,
+            observation_sha256=hashlib.sha256(np.asarray(obs).tobytes()).hexdigest(),
+            goal_sha256=hashlib.sha256(np.asarray(info['goal']).tobytes()).hexdigest(),
+            success=False, steps=0))
+        return obs, info
+
+    def step(self, action):
+        result = self.env.step(action)
+        self.records[-1]['steps'] += 1
+        self.records[-1]['success'] |= bool(np.any(result[4].get('success', False)))
+        return result
 
 
-def _evaluate_episode(
-    agent: Any,
-    env: Any,
-    observation: np.ndarray,
-    goal: np.ndarray,
-    *,
-    action_low: np.ndarray,
-    action_high: np.ndarray,
-    max_episode_steps: int,
-    num_candidates: int,
-    temperature: float,
-    rng,
-) -> tuple[bool, Any]:
-    observation = np.asarray(observation, dtype=np.float32).reshape(-1)
-    goal = np.asarray(goal, dtype=np.float32).reshape(-1)
-    success = False
-    terminated = False
-    truncated = False
-    step = 0
-
-    while step < max_episode_steps and not (terminated or truncated):
-        rng, sample_seed = jax.random.split(rng)
-        action_chunk = _sample_action_chunk(
-            agent,
-            observation,
-            goal,
-            num_candidates=num_candidates,
-            temperature=temperature,
-            seed=sample_seed,
-        )
-
-        for action in action_chunk:
-            if step >= max_episode_steps or terminated or truncated:
-                break
-            action = np.clip(action, action_low, action_high)
-            observation, _, terminated, truncated, info = env.step(action)
-            observation = np.asarray(observation, dtype=np.float32).reshape(-1)
-            success = success or _info_success(info)
-            terminated = bool(terminated)
-            truncated = bool(truncated)
-            step += 1
-
-    return success, rng
-
-
-def evaluate(
-    agent: Any,
-    env: Any,
-    *,
-    task_ids: Sequence[int] = DEFAULT_TASK_IDS,
-    episodes_per_task: int = 10,
-    num_candidates: int = 1,
-    temperature: float = 1.0,
-    seed: int = 0,
-) -> dict[str, float | int]:
-    """Evaluate PathBridger on OGBench tasks using five-step IDM chunks.
-
-    Each replanning call receives batched state and goal arrays and a fresh JAX
-    random key. An episode succeeds when the environment reports
-    ``info['success']`` on any step.
-    """
-    task_ids = tuple(int(task_id) for task_id in task_ids)
+def evaluate(agent, env, *, task_ids=DEFAULT_TASK_IDS, episodes_per_task=25,
+             num_candidates=32, temperature=1.0, seed=0, records=None):
+    # A training seed must not change paired evaluation inputs. As before,
+    # candidate key = episode index within each task, reused when replanning.
+    del seed
+    if episodes_per_task < 1 or num_candidates < 1 or not np.isfinite(temperature) or temperature < 0:
+        raise ValueError('Require positive episode/candidate counts and finite nonnegative temperature.')
     if not task_ids:
-        raise ValueError('task_ids must contain at least one task.')
-    if int(episodes_per_task) < 1:
-        raise ValueError('episodes_per_task must be at least 1.')
-    if int(num_candidates) < 1:
-        raise ValueError('num_candidates must be at least 1.')
-    if float(temperature) < 0:
-        raise ValueError('temperature must be non-negative.')
-
-    action_low = np.asarray(env.action_space.low, dtype=np.float32)
-    action_high = np.asarray(env.action_space.high, dtype=np.float32)
-    max_episode_steps = _max_episode_steps(env)
-    rng = jax.random.PRNGKey(int(seed))
-    metrics: dict[str, float | int] = {}
-    task_success_rates = []
-
-    for task_id in task_ids:
-        successes = []
-        for _ in range(int(episodes_per_task)):
-            observation, info = env.reset(options={'task_id': task_id, 'render_goal': False})
-            if not isinstance(info, Mapping) or 'goal' not in info:
-                raise RuntimeError(f'Environment reset for task {task_id} did not return info["goal"].')
-            success, rng = _evaluate_episode(
-                agent,
-                env,
-                observation,
-                info['goal'],
-                action_low=action_low,
-                action_high=action_high,
-                max_episode_steps=max_episode_steps,
-                num_candidates=int(num_candidates),
-                temperature=float(temperature),
-                rng=rng,
-            )
-            successes.append(float(success))
-
-        task_success = float(np.mean(successes))
-        metrics[f'task_{task_id}_success'] = task_success
-        task_success_rates.append(task_success)
-
-    metrics['overall_success'] = float(np.mean(task_success_rates))
-    metrics['num_tasks'] = len(task_ids)
-    metrics['episodes_per_task'] = int(episodes_per_task)
-    return metrics
-
-
-__all__ = ['ACTION_CHUNK_HORIZON', 'DEFAULT_TASK_IDS', 'evaluate']
+        raise ValueError('task_ids cannot be empty.')
+    recorded = RecordedEnv(env)
+    with stable_action_space():
+        result = _evaluate_env_tasks(recorded, EvalDynamics(agent.dynamics, num_candidates, temperature),
+                                    None, {'actor_chunk_horizon': 5}, {'action_chunk_horizon': 5},
+                                    critic_agent=agent.critic, task_ids=tuple(task_ids),
+                                    episodes_per_task=episodes_per_task, idm_only=True)
+    if records is not None:
+        records.extend(recorded.records)
+    return {**{f'task_{t}_success': result[f'eval_idm/task_{t}/success_rate'] for t in task_ids},
+            'overall_success': result['eval_idm/success_rate_mean'],
+            'num_tasks': len(task_ids), 'episodes_per_task': episodes_per_task}

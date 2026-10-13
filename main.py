@@ -9,6 +9,10 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
+from utils.runtime import configure_training_runtime
+
+configure_training_runtime()
+
 import jax
 import numpy as np
 import tqdm
@@ -17,8 +21,8 @@ from ml_collections import config_flags
 
 from agents import PathBridgerAgent
 from envs.env_utils import make_env_and_datasets
-from utils.datasets import PathBridgerDataset
-from utils.evaluation import DEFAULT_TASK_IDS, evaluate
+from utils.core_dataset import CoreDataset
+from utils.async_evaluation import CpuEvaluator
 from utils.flax_utils import resolve_checkpoint, restore_agent, save_agent
 from utils.log_utils import CsvLogger, get_exp_name, get_flag_dict, setup_wandb
 
@@ -43,7 +47,8 @@ flags.DEFINE_integer('train_steps', 1_000_000, 'Number of gradient updates.')
 flags.DEFINE_integer('log_interval', 5_000, 'Training CSV/W&B logging interval.')
 flags.DEFINE_integer('eval_interval', 100_000, 'Environment evaluation interval; 0 disables intermediate eval.')
 flags.DEFINE_integer('save_interval', 100_000, 'Checkpoint interval; 0 saves only the final checkpoint.')
-flags.DEFINE_integer('eval_episodes', 50, 'Evaluation episodes for each of the five OGBench tasks.')
+flags.DEFINE_integer('eval_episodes', 25, 'Evaluation episodes for each of the five OGBench tasks.')
+flags.DEFINE_boolean('eval_final', True, 'Queue CPU evaluation at the final step.')
 flags.DEFINE_boolean('use_wandb', False, 'Enable optional Weights & Biases logging.')
 flags.DEFINE_boolean('use_tqdm', True, 'Show a training progress bar.')
 flags.DEFINE_boolean(
@@ -67,6 +72,15 @@ def _host_metrics(info) -> dict[str, float]:
         if array.size != 1:
             raise ValueError(f'Training metric {key!r} must be scalar, got shape {array.shape}.')
         metrics[str(key)] = float(array.reshape(()))
+    # Public plotting names remain available. Alias already-computed host
+    # scalars only; never add computations to the original JIT/loss graph.
+    for alias, source in {
+        'value/loss': 'critic/value/loss',
+        'endpoint/loss': 'dynamics/phase1/loss_subgoal',
+        'bridge/loss': 'dynamics/forward_bridge/loss_path_interior',
+        'idm/loss': 'dynamics/phase1/loss_idm',
+    }.items():
+        metrics[alias] = metrics[source]
     return metrics
 
 
@@ -114,13 +128,16 @@ def main(_):
         str(config.env_name),
         dataset_dir=FLAGS.dataset_dir or None,
     )
-    dataset = PathBridgerDataset(train_data, config)
-    example_batch = dataset.sample(1)
+    dataset = CoreDataset(train_data, config)
+    # Original main.py reseeds immediately before its full-size initialization batch.
+    np.random.seed(FLAGS.seed)
+    example_batch, example_critic = dataset.sample(_BATCH_SIZE)
     agent = PathBridgerAgent.create(
         FLAGS.seed,
         example_batch['observations'],
         example_batch['actions'],
         config,
+        critic_batch=example_critic,
     )
     if FLAGS.restore_path:
         agent = restore_agent(agent, FLAGS.restore_path, FLAGS.restore_step)
@@ -136,6 +153,8 @@ def main(_):
     checkpoint_dir = os.path.join(run_dir, 'checkpoints')
     os.makedirs(checkpoint_dir, exist_ok=True)
     _write_run_config(run_dir, config)
+    from utils.provenance import write_provenance
+    write_provenance(run_dir, agent)
 
     wandb_run = None
     if FLAGS.use_wandb:
@@ -153,7 +172,7 @@ def main(_):
         steps = tqdm.tqdm(steps, smoothing=0.1, dynamic_ncols=True)
 
     train_logger = CsvLogger(os.path.join(run_dir, 'train.csv'))
-    eval_logger = CsvLogger(os.path.join(run_dir, 'eval.csv'))
+    cpu_evaluator = CpuEvaluator(run_dir, FLAGS.eval_episodes)
     start_time = time.time()
     interval_start = start_time
     prefetch_pool = (
@@ -176,7 +195,8 @@ def main(_):
                 next_batch_future = None
 
             is_final = step == FLAGS.train_steps
-            do_save = is_final or (
+            do_eval = (is_final and FLAGS.eval_final) or (FLAGS.eval_interval > 0 and step % FLAGS.eval_interval == 0)
+            do_save = do_eval or is_final or (
                 FLAGS.save_interval > 0
                 and step % FLAGS.save_interval == 0
             )
@@ -196,31 +216,18 @@ def main(_):
                 if wandb_run is not None:
                     wandb_run.log({f'training/{key}': value for key, value in train_metrics.items()}, step=step)
 
-            do_eval = is_final or (FLAGS.eval_interval > 0 and step % FLAGS.eval_interval == 0)
-            if do_eval:
-                eval_info = evaluate(
-                    agent,
-                    env,
-                    task_ids=DEFAULT_TASK_IDS,
-                    episodes_per_task=FLAGS.eval_episodes,
-                    num_candidates=int(config.eval_num_candidates),
-                    temperature=float(config.eval_temperature),
-                    seed=FLAGS.seed,
-                )
-                eval_metrics = {f'evaluation/{key}': value for key, value in eval_info.items()}
-                eval_logger.log(eval_metrics, step=step)
-                if wandb_run is not None:
-                    wandb_run.log(eval_metrics, step=step)
-
             if do_save:
-                save_agent(agent, checkpoint_dir, step)
+                checkpoint = save_agent(agent, checkpoint_dir, step)
+                if do_eval:
+                    cpu_evaluator.submit(checkpoint, step)
                 if prefetch_pool is not None and not is_final:
                     next_batch_future = _submit_batch()
     finally:
         if prefetch_pool is not None:
             prefetch_pool.shutdown(wait=True)
         train_logger.close()
-        eval_logger.close()
+        cpu_evaluator.finish()
+        env.close()
         if wandb_run is not None:
             wandb_run.finish()
 

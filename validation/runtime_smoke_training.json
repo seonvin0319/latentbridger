@@ -1,0 +1,7 @@
+{
+  "prefetch_cli_resume_exact": true,
+  "full_checkpoint_including_host_rng_exact": true,
+  "run_dir": "/home/shchoi/PathBridger-preserved3999/validation/runtime_smoke/pathbridger/continuous/pathbridger_flow_puzzle-3x3-play-v0_sd001_20261013_124742",
+  "resumed_run_dir": "/home/shchoi/PathBridger-preserved3999/validation/runtime_smoke/pathbridger/resumed/pathbridger_flow_puzzle-3x3-play-v0_sd001_20261013_124753",
+  "training_steps": 6
+}

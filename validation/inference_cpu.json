@@ -1,0 +1,1011 @@
+{
+  "backend": "cpu",
+  "cases": 125,
+  "policy_batch_size": 1,
+  "exact_outputs": [
+    {
+      "episode": 0,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 1,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 2,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 3,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 4,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 5,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 6,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 7,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 8,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 9,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 10,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 11,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 12,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 13,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 14,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 15,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 16,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 17,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 18,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 19,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 20,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 21,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 22,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 23,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 24,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 25,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 26,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 27,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 28,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 29,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 30,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 31,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 32,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 33,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 34,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 35,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 36,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 37,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 38,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 39,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 40,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 41,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 42,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 43,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 44,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 45,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 46,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 47,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 48,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 49,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 50,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 51,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 52,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 53,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 54,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 55,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 56,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 57,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 58,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 59,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 60,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 61,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 62,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 63,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 64,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 65,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 66,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 67,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 68,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 69,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 70,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 71,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 72,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 73,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 74,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 75,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 76,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 77,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 78,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 79,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 80,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 81,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 82,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 83,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 84,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 85,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 86,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 87,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 88,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 89,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 90,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 91,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 92,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 93,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 94,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 95,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 96,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 97,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 98,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 99,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 100,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 101,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 102,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 103,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 104,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 105,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 106,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 107,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 108,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 109,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 110,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 111,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 112,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 113,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 114,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 115,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 116,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 117,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 118,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 119,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 120,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 121,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 122,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 123,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    },
+    {
+      "episode": 124,
+      "candidates": true,
+      "scores": true,
+      "selected_endpoint": true,
+      "bridge": true,
+      "raw_actions": true
+    }
+  ],
+  "evaluator_source_exact": true,
+  "public_batched_action_api_exact": true,
+  "reset_observation_and_full_goal_hashes_exact": true,
+  "passed": true
+}

@@ -140,12 +140,22 @@ def resolve_checkpoint(
     return path / f'params_{step}.pkl', step
 
 
-def save_agent(agent: Any, save_dir: str | os.PathLike[str], step: int) -> str:
-    """Save the unified agent and host sampler states."""
+CHECKPOINT_FORMAT = 'pathbridger/3999f37/v1'
+
+
+def save_agent(agent, save_dir, step):
+    """Atomically save full original states, config, and the host RNG stream."""
+    from agents.pathbridger import CORE_REVISION
     save_path, _ = resolve_checkpoint(save_dir, step)
+    if int(agent.dynamics.network.step) != step + 1 or int(agent.critic.network.step) != step + 1:
+        raise ValueError('Checkpoint step does not match both original optimizer states.')
     save_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        'agent': flax.serialization.to_state_dict(agent),
+        'format': CHECKPOINT_FORMAT, 'core_revision': CORE_REVISION,
+        'config': dict(agent.config),
+        'obs_dim': int(agent.dynamics.network.model_def.modules['idm_net'].obs_dim),
+        'action_dim': int(agent.dynamics.network.model_def.modules['idm_net'].action_dim),
+        'agent': jax.device_get(flax.serialization.to_state_dict(agent)),
         'numpy_random_state': np.random.get_state(),
         'python_random_state': random.getstate(),
     }
@@ -156,32 +166,35 @@ def save_agent(agent: Any, save_dir: str | os.PathLike[str], step: int) -> str:
     return str(save_path)
 
 
-def restore_agent(
-    agent: Any,
-    restore_path: str | os.PathLike[str],
-    step: int = 0,
-) -> Any:
-    """Restore an agent and, when present, its host sampler states."""
-    checkpoint_path, _ = resolve_checkpoint(restore_path, step)
-    if not checkpoint_path.is_file():
-        raise FileNotFoundError(f'Checkpoint not found: {checkpoint_path}')
-    with checkpoint_path.open('rb') as file:
+def _read_checkpoint(path, step=0):
+    from agents.pathbridger import CORE_REVISION
+    path, step = resolve_checkpoint(path, step)
+    with path.open('rb') as file:
         payload = pickle.load(file)
-    if not isinstance(payload, dict) or 'agent' not in payload:
-        raise ValueError(f'Invalid PathBridger checkpoint: {checkpoint_path}')
-    restored_agent = flax.serialization.from_state_dict(agent, payload['agent'])
-    if 'numpy_random_state' in payload:
-        np.random.set_state(payload['numpy_random_state'])
-    if 'python_random_state' in payload:
-        random.setstate(payload['python_random_state'])
-    return restored_agent
+    if payload.get('format') != CHECKPOINT_FORMAT or payload.get('core_revision') != CORE_REVISION:
+        raise ValueError('Expected a preserved-3999f37 checkpoint. Earlier unified checkpoints lack '
+                         'the original critic/Adam state and cannot resume this computation path exactly.')
+    for name in ('dynamics', 'critic'):
+        if int(payload['agent'][name]['network']['step']) != step + 1:
+            raise ValueError('Checkpoint filename and optimizer steps disagree.')
+    return payload
 
 
-__all__ = [
-    'ModuleDict',
-    'TrainState',
-    'nonpytree_field',
-    'resolve_checkpoint',
-    'restore_agent',
-    'save_agent',
-]
+def restore_agent(agent, restore_path, step=0):
+    import json
+    payload = _read_checkpoint(restore_path, step)
+    if json.dumps(payload['config'], sort_keys=True) != json.dumps(dict(agent.config), sort_keys=True):
+        raise ValueError('Resume configuration differs from the checkpoint configuration.')
+    restored = flax.serialization.from_state_dict(agent, payload['agent'])
+    np.random.set_state(payload['numpy_random_state'])
+    random.setstate(payload['python_random_state'])
+    return restored
+
+
+def load_agent(path, step=0):
+    """Construct from checkpoint metadata; evaluation never loads the training dataset."""
+    from agents import PathBridgerAgent
+    payload = _read_checkpoint(path, step)
+    agent = PathBridgerAgent.create(0, np.zeros((1, payload['obs_dim']), np.float32),
+                                  np.zeros((1, payload['action_dim']), np.float32), payload['config'])
+    return flax.serialization.from_state_dict(agent, payload['agent'])
